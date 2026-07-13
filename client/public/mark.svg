@@ -1,0 +1,50 @@
+<svg viewBox="0 0 140 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Haveli Wale">
+  <defs>
+    <linearGradient id="dome" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7d2342" />
+      <stop offset="1" stop-color="#5a1730" />
+    </linearGradient>
+  </defs>
+
+  <!-- finial spire -->
+  <circle cx="70" cy="12" r="3.4" fill="#6d1f3a" />
+  <path d="M70 15 L73 24 L67 24 Z" fill="#6d1f3a" />
+
+  <!-- onion dome -->
+  <path d="M70 23
+           C 52 30, 44 46, 50 62
+           L 90 62
+           C 96 46, 88 30, 70 23 Z"
+        fill="url(#dome)" />
+  <!-- inner cusped arch -->
+  <path d="M70 33
+           C 60 38, 56 48, 59 58
+           L 81 58
+           C 84 48, 80 38, 70 33 Z"
+        fill="none" stroke="#e7c873" stroke-width="2" />
+  <!-- dome base -->
+  <rect x="47" y="62" width="46" height="5" rx="2" fill="#6d1f3a" />
+
+  <!-- decorative beaded swoop -->
+  <path d="M18 78 Q 70 64, 122 78" fill="none" stroke="#c8a04e" stroke-width="2.4" />
+  <g fill="#c8a04e">
+    <circle cx="55" cy="73.4" r="1.6" />
+    <circle cx="70" cy="71.8" r="1.6" />
+    <circle cx="85" cy="73.4" r="1.6" />
+  </g>
+
+  <!-- left paisley -->
+  <path d="M30 80
+           C 18 78, 16 90, 24 94
+           C 31 97, 36 90, 33 84
+           C 32 81, 28 81, 28 85
+           C 28 88, 31 88, 31 86"
+        fill="none" stroke="#c8a04e" stroke-width="2.2" stroke-linecap="round" />
+  <!-- right paisley (mirrored) -->
+  <path d="M110 80
+           C 122 78, 124 90, 116 94
+           C 109 97, 104 90, 107 84
+           C 108 81, 112 81, 112 85
+           C 112 88, 109 88, 109 86"
+        fill="none" stroke="#c8a04e" stroke-width="2.2" stroke-linecap="round" />
+</svg>
