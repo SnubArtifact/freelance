@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useCart } from "../context/CartContext.jsx";
 import { api, formatPrice } from "../api.js";
+import { apiUrl } from "../config.js";
 import { loadPaytmSDK, openPaytm } from "../paytm.js";
 
 /* ─── Demo Payment Modal ───────────────────────────────────────────────────── */
@@ -176,7 +177,7 @@ export default function Checkout() {
 
   // Is the real Paytm gateway configured on the server?
   useEffect(() => {
-    fetch("/api/payments/config")
+    fetch(apiUrl("/api/payments/config"))
       .then((r) => r.json())
       .then((d) => setPayLive(Boolean(d.configured)))
       .catch(() => setPayLive(false));

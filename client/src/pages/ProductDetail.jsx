@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { api, formatPrice } from "../api.js";
+import { assetUrl } from "../config.js";
 import { useCart } from "../context/CartContext.jsx";
 
 export default function ProductDetail() {
@@ -65,7 +66,7 @@ export default function ProductDetail() {
         <div className="detail-gallery">
           <div className="detail-main">
             {images[active] ? (
-              <img src={images[active]} alt={product.name} />
+              <img src={assetUrl(images[active])} alt={product.name} />
             ) : (
               <div className="placeholder">No image</div>
             )}
@@ -78,7 +79,7 @@ export default function ProductDetail() {
                   className={`thumb ${i === active ? "active" : ""}`}
                   onClick={() => setActive(i)}
                 >
-                  <img src={src} alt={`${product.name} ${i + 1}`} />
+                  <img src={assetUrl(src)} alt={`${product.name} ${i + 1}`} />
                 </button>
               ))}
             </div>

@@ -1,3 +1,5 @@
+import { apiUrl } from "./config.js";
+
 const TOKEN_KEY = "saree_admin_token";
 
 export function getToken() {
@@ -32,7 +34,7 @@ function authHeaders(extra = {}) {
 
 export const api = {
   async login(password) {
-    const res = await fetch("/api/login", {
+    const res = await fetch(apiUrl("/api/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
@@ -41,16 +43,16 @@ export const api = {
   },
 
   async listProducts() {
-    return handle(await fetch("/api/products"));
+    return handle(await fetch(apiUrl("/api/products")));
   },
 
   async getProduct(id) {
-    return handle(await fetch(`/api/products/${id}`));
+    return handle(await fetch(apiUrl(`/api/products/${id}`)));
   },
 
   async createProduct(data) {
     return handle(
-      await fetch("/api/products", {
+      await fetch(apiUrl("/api/products"), {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(data),
@@ -60,7 +62,7 @@ export const api = {
 
   async updateProduct(id, data) {
     return handle(
-      await fetch(`/api/products/${id}`, {
+      await fetch(apiUrl(`/api/products/${id}`), {
         method: "PUT",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(data),
@@ -70,7 +72,7 @@ export const api = {
 
   async deleteProduct(id) {
     return handle(
-      await fetch(`/api/products/${id}`, {
+      await fetch(apiUrl(`/api/products/${id}`), {
         method: "DELETE",
         headers: authHeaders(),
       })
@@ -81,7 +83,7 @@ export const api = {
     const form = new FormData();
     [...files].forEach((f) => form.append("images", f));
     return handle(
-      await fetch("/api/upload", {
+      await fetch(apiUrl("/api/upload"), {
         method: "POST",
         headers: authHeaders(),
         body: form,
@@ -92,7 +94,7 @@ export const api = {
   // ----- Guest checkout & orders -----
   async createOrder(data) {
     return handle(
-      await fetch("/api/orders", {
+      await fetch(apiUrl("/api/orders"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -102,7 +104,7 @@ export const api = {
 
   async initiatePaytmPayment(items) {
     return handle(
-      await fetch("/api/payments/paytm/initiate", {
+      await fetch(apiUrl("/api/payments/paytm/initiate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ items }),
@@ -111,7 +113,9 @@ export const api = {
   },
 
   async adminOrders() {
-    return handle(await fetch("/api/admin/orders", { headers: authHeaders() }));
+    return handle(
+      await fetch(apiUrl("/api/admin/orders"), { headers: authHeaders() })
+    );
   },
 };
 

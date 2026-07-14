@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, setToken, formatPrice } from "../api.js";
+import { assetUrl } from "../config.js";
 import AdminOrders from "./AdminOrders.jsx";
 
 const EMPTY = {
@@ -250,7 +251,7 @@ export default function AdminDashboard() {
             <div className="image-tray">
               {form.images.map((src, i) => (
                 <div key={i} className="image-tile">
-                  <img src={src} alt="" />
+                  <img src={assetUrl(src)} alt="" />
                   <button type="button" onClick={() => removeImage(i)}>✕</button>
                 </div>
               ))}
@@ -309,7 +310,7 @@ export default function AdminDashboard() {
                 <div key={p.id} className="admin-row">
                   <div className="admin-thumb">
                     {p.images?.[0] ? (
-                      <img src={p.images[0]} alt={p.name} />
+                      <img src={assetUrl(p.images[0])} alt={p.name} />
                     ) : (
                       <div className="placeholder">—</div>
                     )}

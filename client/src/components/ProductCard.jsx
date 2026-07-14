@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { formatPrice } from "../api.js";
+import { assetUrl } from "../config.js";
 
 export default function ProductCard({ product }) {
   const img = product.images?.[0];
@@ -14,7 +15,7 @@ export default function ProductCard({ product }) {
     <Link to={`/product/${product.id}`} className="card">
       <div className="card-media">
         {img ? (
-          <img src={img} alt={product.name} loading="lazy" />
+          <img src={assetUrl(img)} alt={product.name} loading="lazy" />
         ) : (
           <div className="card-media placeholder">No image</div>
         )}

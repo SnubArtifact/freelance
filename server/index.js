@@ -105,8 +105,8 @@ async function verifyPaytmChecksum(body, checksumHash) {
   );
 }
 
-const DATA_DIR = path.join(__dirname, "data");
-const UPLOAD_DIR = path.join(__dirname, "uploads");
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(DATA_DIR, "uploads");
 const DB_FILE = path.join(DATA_DIR, "products.json");
 
 for (const dir of [DATA_DIR, UPLOAD_DIR]) {
