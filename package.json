@@ -5,8 +5,9 @@
   "description": "Boutique saree storefront with admin panel",
   "scripts": {
     "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "postinstall": "npm --prefix server install",
     "dev": "concurrently -n SERVER,CLIENT -c magenta,cyan \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
-    "start": "npm --prefix server start"
+    "start": "node server/index.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
