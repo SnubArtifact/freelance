@@ -10,6 +10,7 @@ export default function Collection() {
   const [sort, setSort] = useState("new");
 
   const activeCategory = params.get("category") || "All";
+  const query = (params.get("q") || "").trim().toLowerCase();
 
   useEffect(() => {
     api
@@ -29,16 +30,31 @@ export default function Collection() {
       activeCategory === "All"
         ? products
         : products.filter((p) => p.category === activeCategory);
+    if (query) {
+      list = list.filter((p) =>
+        [p.name, p.description, p.category]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(query))
+      );
+    }
     list = [...list];
     if (sort === "low") list.sort((a, b) => a.price - b.price);
     else if (sort === "high") list.sort((a, b) => b.price - a.price);
     else list.sort((a, b) => b.createdAt - a.createdAt);
     return list;
-  }, [products, activeCategory, sort]);
+  }, [products, activeCategory, sort, query]);
 
   function selectCategory(cat) {
-    if (cat === "All") setParams({});
-    else setParams({ category: cat });
+    const next = {};
+    if (cat !== "All") next.category = cat;
+    if (query) next.q = params.get("q");
+    setParams(next);
+  }
+
+  function clearSearch() {
+    const next = {};
+    if (activeCategory !== "All") next.category = activeCategory;
+    setParams(next);
   }
 
   return (
@@ -47,6 +63,12 @@ export default function Collection() {
         <span className="eyebrow">Our Collection</span>
         <h1>Explore the Drapes</h1>
         <p>Find the perfect saree for every occasion.</p>
+        {query && (
+          <p className="search-info">
+            Showing results for <strong>“{params.get("q")}”</strong>{" "}
+            <button className="link-arrow" onClick={clearSearch}>Clear</button>
+          </p>
+        )}
       </div>
 
       <div className="collection-bar">

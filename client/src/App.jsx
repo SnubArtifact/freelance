@@ -8,6 +8,9 @@ import Cart from "./pages/Cart.jsx";
 import Checkout from "./pages/Checkout.jsx";
 import AdminLogin from "./pages/AdminLogin.jsx";
 import AdminDashboard from "./pages/AdminDashboard.jsx";
+import PrivacyPolicy from "./pages/PrivacyPolicy.jsx";
+import TermsAndConditions from "./pages/TermsAndConditions.jsx";
+import ReturnPolicy from "./pages/ReturnPolicy.jsx";
 import { isLoggedIn } from "./api.js";
 
 function RequireAdmin({ children }) {
@@ -32,6 +35,9 @@ export default function App() {
           <Route path="/product/:id" element={<ProductDetail />} />
           <Route path="/cart" element={<Cart />} />
           <Route path="/checkout" element={<Checkout />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
+          <Route path="/return-policy" element={<ReturnPolicy />} />
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route
             path="/admin"
