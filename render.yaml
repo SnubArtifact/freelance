@@ -25,11 +25,19 @@ services:
         sync: false
       - key: SHOP_EMAIL
         sync: false
-      - key: PAYTM_MID
+      - key: HDFC_API_KEY
         sync: false
-      - key: PAYTM_MERCHANT_KEY
+      - key: HDFC_MERCHANT_ID
         sync: false
-      - key: PAYTM_WEBSITE
+      - key: HDFC_CLIENT_ID
+        sync: false
+      - key: HDFC_ENV
+        value: production
+      - key: HDFC_RESELLER_ID
+        value: hdfc_reseller
+      - key: PUBLIC_SERVER_URL
+        sync: false
+      - key: CLIENT_URL
         sync: false
     disk:
       name: saree-data
