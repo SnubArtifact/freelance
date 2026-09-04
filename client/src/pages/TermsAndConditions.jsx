@@ -4,18 +4,18 @@ export default function TermsAndConditions() {
       <div className="page-head">
         <span className="eyebrow">Legal</span>
         <h1>Terms &amp; Conditions</h1>
-        <p>The terms that apply when you shop with Haveli Wale.</p>
+        <p>The terms that apply when you shop with Pankaj Enterprises.</p>
       </div>
 
       <div className="policy-body">
         <p>
-          Welcome to Haveli Wale. By browsing our website or placing an order,
+          Welcome to Pankaj Enterprises. By browsing our website or placing an order,
           you agree to the following terms. Please read them carefully.
         </p>
 
         <h2>1. About Us</h2>
         <p>
-          Haveli Wale is a saree boutique based in Sikar, Rajasthan, offering
+          Pankaj Enterprises is a saree boutique based in Sikar, Rajasthan, offering
           Kanjivaram, Banarasi, silk and cotton drapes both in-store and
           through our website haveliwale.com.
         </p>
@@ -44,7 +44,7 @@ export default function TermsAndConditions() {
         <ul>
           <li>All prices are listed in Indian Rupees (INR) and include
             applicable taxes unless stated otherwise.</li>
-          <li>We accept online payments through Paytm (UPI, cards, wallets,
+          <li>We accept online payments through HDFC SmartGateway (UPI, cards, wallets,
             net banking).</li>
           <li>Shipping charges, if any, will be shown clearly at checkout
             before you pay.</li>
@@ -74,7 +74,7 @@ export default function TermsAndConditions() {
           <li>You agree not to misuse the site, attempt to break into it, or
             use it for anything unlawful.</li>
           <li>All content on the site — photos, text, logos, designs — is
-            owned by Haveli Wale and may not be copied or reused without
+            owned by Pankaj Enterprises and may not be copied or reused without
             written permission.</li>
         </ul>
 

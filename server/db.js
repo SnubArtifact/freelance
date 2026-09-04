@@ -90,6 +90,31 @@ export function getOrder(id) {
   return rowToOrder(db.prepare("SELECT * FROM orders WHERE id = ?").get(id));
 }
 
+export function getOrderByOrderNo(orderNo) {
+  return rowToOrder(
+    db.prepare("SELECT * FROM orders WHERE orderNo = ?").get(orderNo)
+  );
+}
+
+// Update payment-related fields for an order after gateway verification.
+const updatePaymentStmt = db.prepare(`
+  UPDATE orders
+     SET paymentStatus = @paymentStatus,
+         status        = @status,
+         paymentId     = @paymentId
+   WHERE orderNo = @orderNo
+`);
+
+export function updateOrderPayment(orderNo, { paymentStatus, status, paymentId }) {
+  updatePaymentStmt.run({
+    orderNo,
+    paymentStatus,
+    status,
+    paymentId: paymentId || null,
+  });
+  return getOrderByOrderNo(orderNo);
+}
+
 export function countOrders() {
   return db.prepare("SELECT COUNT(*) AS n FROM orders").get().n;
 }

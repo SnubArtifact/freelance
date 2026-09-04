@@ -102,14 +102,20 @@ export const api = {
     );
   },
 
-  async initiatePaytmPayment(items) {
+  // Create a SmartGateway payment session. Returns { configured, paymentLink }
+  // when the gateway is live, or { configured: false } to fall back to demo.
+  async createHdfcSession(items, customer) {
     return handle(
-      await fetch(apiUrl("/api/payments/paytm/initiate"), {
+      await fetch(apiUrl("/api/payments/hdfc/session"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({ items, customer }),
       })
     );
+  },
+
+  async getOrder(orderNo) {
+    return handle(await fetch(apiUrl(`/api/orders/${orderNo}`)));
   },
 
   async adminOrders() {

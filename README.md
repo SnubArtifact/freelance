@@ -1,4 +1,4 @@
-# Haveli Wale — Boutique Storefront + Admin Panel
+# Pankaj Enterprises — Boutique Storefront + Admin Panel
 
 A full-stack platform to showcase your saree collection, sell online, and manage
 inventory from a private admin panel. Sarees you add in the admin appear on the

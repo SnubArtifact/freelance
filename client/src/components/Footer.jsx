@@ -8,7 +8,7 @@ export default function Footer() {
     <footer className="footer">
       <div className="footer-grid">
         <div>
-          <div className="brand-mark footer-brand">Haveli Wale</div>
+          <div className="brand-mark footer-brand">Pankaj Enterprises</div>
           <p className="footer-text">
             Handpicked sarees woven with tradition — Kanjivaram, Banarasi, silk
             and cotton drapes for every celebration.
@@ -18,7 +18,7 @@ export default function Footer() {
               href={INSTAGRAM_URL}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="Haveli Wale on Instagram"
+              aria-label="Pankaj Enterprises on Instagram"
               className="social-icon"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
@@ -33,7 +33,7 @@ export default function Footer() {
               href={FACEBOOK_URL}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="Haveli Wale on Facebook"
+              aria-label="Pankaj Enterprises on Facebook"
               className="social-icon"
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
@@ -65,7 +65,7 @@ export default function Footer() {
         </div>
       </div>
       <div className="footer-bottom">
-        <span>© {new Date().getFullYear()} Haveli Wale. Crafted with love.</span>
+        <span>© {new Date().getFullYear()} Pankaj Enterprises. Crafted with love.</span>
         <Link to="/admin" className="admin-link">Admin</Link>
       </div>
     </footer>

@@ -2,12 +2,17 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import nodemailer from "nodemailer";
-import { insertOrder, listOrders, migrateFromJson } from "./db.js";
+import {
+  insertOrder,
+  listOrders,
+  migrateFromJson,
+  getOrderByOrderNo,
+  updateOrderPayment,
+} from "./db.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import PaytmChecksum from "paytmchecksum";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 5050;
@@ -22,87 +27,111 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_USER = process.env.SMTP_USER || "";
 const SMTP_PASS = process.env.SMTP_PASS || "";
 const SHOP_EMAIL = process.env.SHOP_EMAIL || SMTP_USER || "orders@haveliwale.com";
-const SHOP_NAME = "Haveli Wale";
+const SHOP_NAME = "Pankaj Enterprises";
 const emailConfigured = () => Boolean(SMTP_HOST && SMTP_USER && SMTP_PASS);
 
-// Paytm payment keys. Get test credentials from https://business.paytm.com
-// Leave unset to run checkout in demo mode (no real charge).
-const PAYTM_MID = process.env.PAYTM_MID || "";
-const PAYTM_MERCHANT_KEY = process.env.PAYTM_MERCHANT_KEY || "";
-const PAYTM_WEBSITE = process.env.PAYTM_WEBSITE || "WEBSTAGING";
-const PAYTM_CHANNEL_ID = process.env.PAYTM_CHANNEL_ID || "WEB";
-const PAYTM_INDUSTRY_TYPE = process.env.PAYTM_INDUSTRY_TYPE || "Retail";
-const paytmConfigured = () => Boolean(PAYTM_MID && PAYTM_MERCHANT_KEY);
+// ---- HDFC SmartGateway payment config ------------------------------------
+// Get these from the HDFC SmartGateway dashboard. Set them in server/.env.
+// Leave HDFC_API_KEY unset to run checkout in demo mode (no real charge).
+//   HDFC_API_KEY        — Base64 is applied for you; paste the raw API key
+//   HDFC_MERCHANT_ID    — your merchant id (x-merchantid)
+//   HDFC_CLIENT_ID      — payment_page_client_id (defaults to the merchant id
+//                         in production; use "hdfcmaster" for sandbox)
+//   HDFC_ENV            — "production" (default) or "sandbox"
+//   HDFC_RESELLER_ID    — x-resellerid (defaults to "hdfc_reseller")
+// Public URLs, used to build the redirect return_url and to send the shopper
+// back to the storefront afterwards:
+//   PUBLIC_SERVER_URL   — this server's public https origin (return_url host)
+//   CLIENT_URL          — the storefront origin to return the shopper to
+const HDFC_API_KEY = process.env.HDFC_API_KEY || "";
+const HDFC_MERCHANT_ID = process.env.HDFC_MERCHANT_ID || "";
+const HDFC_CLIENT_ID =
+  process.env.HDFC_CLIENT_ID || HDFC_MERCHANT_ID || "";
+const HDFC_ENV = (process.env.HDFC_ENV || "production").toLowerCase();
+const HDFC_RESELLER_ID = process.env.HDFC_RESELLER_ID || "hdfc_reseller";
+const HDFC_BASE_URL =
+  process.env.HDFC_BASE_URL ||
+  (HDFC_ENV === "sandbox"
+    ? "https://smartgateway.hdfcuat.bank.in"
+    : "https://smartgateway.hdfc.bank.in");
 
-// Returns true for staging/test MIDs so we hit the right Paytm endpoint.
-const isPaytmStaging = () =>
-  !PAYTM_MID ||
-  PAYTM_MID.toLowerCase().includes("staging") ||
-  PAYTM_MID.toLowerCase().includes("test");
+const PUBLIC_SERVER_URL = (
+  process.env.PUBLIC_SERVER_URL || `http://localhost:${PORT}`
+).replace(/\/$/, "");
+const CLIENT_URL = (
+  process.env.CLIENT_URL || "http://localhost:5173"
+).replace(/\/$/, "");
 
-const PAYTM_API_BASE = () =>
-  isPaytmStaging()
-    ? "https://securegw-stage.paytm.in"
-    : "https://securegw.paytm.in";
+const hdfcConfigured = () => Boolean(HDFC_API_KEY && HDFC_MERCHANT_ID);
 
-/**
- * Calls Paytm's initiateTransaction API and returns a txnToken.
- * amountPaise is the amount in paise (₹1 = 100 paise).
- */
-async function initiatePaytmTransaction(orderId, amountPaise, customer) {
-  const amountINR = (amountPaise / 100).toFixed(2);
-  const paytmParams = {
-    body: {
-      requestType: "Payment",
-      mid: PAYTM_MID,
-      websiteName: PAYTM_WEBSITE,
-      orderId,
-      callbackUrl: `${PAYTM_API_BASE()}/theia/paytmCallback?ORDER_ID=${orderId}`,
-      txnAmount: { value: amountINR, currency: "INR" },
-      userInfo: {
-        custId: customer.email || customer.phone || orderId,
-        email: customer.email || "",
-        mobile: customer.phone || "",
-        firstName: (customer.name || "").split(" ")[0],
-        lastName: (customer.name || "").split(" ").slice(1).join(" "),
-      },
-    },
+// Basic-auth header: base64 of "<api_key>:" (API key as username, no password).
+function hdfcAuthHeaders(customerId) {
+  return {
+    Authorization: `Basic ${Buffer.from(`${HDFC_API_KEY}:`).toString("base64")}`,
+    "Content-Type": "application/json",
+    "x-merchantid": HDFC_MERCHANT_ID,
+    "x-customerid": customerId,
+    "x-resellerid": HDFC_RESELLER_ID,
   };
-
-  const checksum = await PaytmChecksum.generateSignature(
-    JSON.stringify(paytmParams.body),
-    PAYTM_MERCHANT_KEY
-  );
-  paytmParams.head = { signature: checksum };
-
-  const url = `${PAYTM_API_BASE()}/theia/api/v1/initiateTransaction?mid=${PAYTM_MID}&orderId=${orderId}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(paytmParams),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Paytm initiate error: ${text}`);
-  }
-  const data = await res.json();
-  if (data?.body?.resultInfo?.resultStatus !== "S") {
-    throw new Error(
-      `Paytm error: ${data?.body?.resultInfo?.resultMsg || "Transaction initiation failed"}`
-    );
-  }
-  return data.body.txnToken;
 }
 
 /**
- * Verifies the Paytm checksum sent in the payment callback.
+ * Creates a SmartGateway payment session and returns the hosted payment-page
+ * URL the shopper must be redirected to. `amountRupees` is a number in INR.
  */
-async function verifyPaytmChecksum(body, checksumHash) {
-  return PaytmChecksum.verifySignature(
-    JSON.stringify(body),
-    PAYTM_MERCHANT_KEY,
-    checksumHash
+async function createHdfcSession(orderId, amountRupees, customer, returnUrl) {
+  const [firstName, ...rest] = (customer.name || "").trim().split(" ");
+  const body = {
+    order_id: orderId,
+    amount: amountRupees.toFixed(2),
+    customer_id: customer.customerId,
+    customer_email: customer.email || "",
+    customer_phone: (customer.phone || "").replace(/\D/g, "").slice(-10),
+    payment_page_client_id: HDFC_CLIENT_ID,
+    action: "paymentPage",
+    currency: "INR",
+    return_url: returnUrl,
+    description: `${SHOP_NAME} order ${orderId}`,
+    first_name: firstName || "",
+    last_name: rest.join(" "),
+  };
+  const res = await fetch(`${HDFC_BASE_URL}/session`, {
+    method: "POST",
+    headers: hdfcAuthHeaders(customer.customerId),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`SmartGateway session error: ${text}`);
+  }
+  const data = await res.json();
+  const link = data?.payment_links?.web;
+  if (!link) {
+    throw new Error("SmartGateway did not return a payment link");
+  }
+  return { paymentLink: link, raw: data };
+}
+
+/**
+ * Authoritative server-to-server check of an order's final status. Returns the
+ * SmartGateway order object ({ status, amount, ... }). `status === "CHARGED"`
+ * means the payment succeeded.
+ */
+async function getHdfcOrderStatus(orderId, customerId) {
+  const res = await fetch(
+    `${HDFC_BASE_URL}/orders/${encodeURIComponent(orderId)}`,
+    {
+      method: "GET",
+      headers: hdfcAuthHeaders(customerId),
+      signal: AbortSignal.timeout(15000),
+    }
   );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`SmartGateway order-status error: ${text}`);
+  }
+  return res.json();
 }
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -166,7 +195,7 @@ function orderEmailHtml(order) {
   const c = order.customer;
   return `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#2a2024">
     <div style="background:#6d1f3a;color:#fbf6f0;padding:24px 28px;border-radius:14px 14px 0 0">
-      <h1 style="margin:0;font-family:Georgia,serif">Haveli Wale</h1>
+      <h1 style="margin:0;font-family:Georgia,serif">Pankaj Enterprises</h1>
       <p style="margin:6px 0 0;opacity:.85">Thank you for your order!</p>
     </div>
     <div style="border:1px solid #e8ddd2;border-top:none;padding:24px 28px;border-radius:0 0 14px 14px">
@@ -190,7 +219,7 @@ function orderEmailHtml(order) {
         Payment: Paid online ·
         ${order.paymentStatus}
       </p>
-      <p style="margin:18px 0 0">With love,<br/>Team Haveli Wale</p>
+      <p style="margin:18px 0 0">With love,<br/>Team Pankaj Enterprises</p>
     </div>
   </div>`;
 }
@@ -201,7 +230,7 @@ async function sendOrderEmail(order) {
   const mail = {
     from: `${SHOP_NAME} <${SHOP_EMAIL}>`,
     to,
-    subject: `Your Haveli Wale order #${order.orderNo} is confirmed`,
+    subject: `Your Pankaj Enterprises order #${order.orderNo} is confirmed`,
     html: orderEmailHtml(order),
   };
   const tx = getTransporter();
@@ -303,6 +332,7 @@ migrateFromJson();
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: false }));
 app.use("/uploads", express.static(UPLOAD_DIR));
 
 // Very small token-based auth. For a single-owner shop this is enough; for a
@@ -346,47 +376,15 @@ app.post("/api/login", (req, res) => {
   return res.status(401).json({ error: "Incorrect password" });
 });
 
-// ----- Payments (Paytm) ---------------------------------------------------
+// ----- Payments (HDFC SmartGateway) ---------------------------------------
 app.get("/api/payments/config", (_req, res) => {
-  res.json({ configured: paytmConfigured(), mid: PAYTM_MID });
+  res.json({ configured: hdfcConfigured() });
 });
 
-// Initiate a Paytm transaction for the current cart. Amount is computed
-// server-side so it can't be tampered with from the client.
-app.post("/api/payments/paytm/initiate", async (req, res) => {
-  const items = Array.isArray(req.body?.items) ? req.body.items : [];
-  if (!items.length) return res.status(400).json({ error: "Your cart is empty" });
-  const subtotal = items.reduce(
-    (s, i) => s + (Number(i.price) || 0) * (Number(i.qty) || 0),
-    0
-  );
-  const shippingFee = subtotal > 4999 ? 0 : 99;
-  const amountPaise = Math.round((subtotal + shippingFee) * 100);
-  if (!paytmConfigured()) {
-    return res.json({ configured: false, amount: amountPaise });
-  }
-  const orderId = "HW" + Date.now().toString();
-  const customer = req.body?.customer || {};
-  try {
-    const txnToken = await initiatePaytmTransaction(orderId, amountPaise, customer);
-    res.json({
-      configured: true,
-      mid: PAYTM_MID,
-      txnToken,
-      orderId,
-      amount: amountPaise,
-    });
-  } catch (err) {
-    res.status(502).json({ error: err.message });
-  }
-});
-
-// ----- Orders (guest checkout) --------------------------------------------
-app.post("/api/orders", async (req, res) => {
-  const items = Array.isArray(req.body?.items) ? req.body.items : [];
-  if (!items.length) return res.status(400).json({ error: "Your cart is empty" });
-
-  const c = req.body?.customer || {};
+// Normalises + validates the checkout customer. Returns { customer } or
+// { error } so callers can respond consistently.
+function readCustomer(body) {
+  const c = body?.customer || {};
   const customer = {
     name: String(c.name || "").trim(),
     email: String(c.email || "").trim(),
@@ -396,40 +394,23 @@ app.post("/api/orders", async (req, res) => {
     pincode: String(c.pincode || "").trim(),
   };
   if (!customer.name || !customer.email || !customer.phone || !customer.address) {
-    return res.status(400).json({ error: "Please fill in your contact and address details" });
+    return { error: "Please fill in your contact and address details" };
   }
   if (!/^\S+@\S+\.\S+$/.test(customer.email)) {
-    return res.status(400).json({ error: "Please enter a valid email address" });
+    return { error: "Please enter a valid email address" };
   }
+  return { customer };
+}
 
-  const payment = "upi";
-
-  // For online payments, verify the Paytm checksum before recording.
-  let paymentStatus = "Paid";
-  const pt = req.body?.paytm || null;
-  if (payment === "upi" && paytmConfigured()) {
-    if (!pt || !pt.CHECKSUMHASH) {
-      return res.status(400).json({ error: "Payment verification failed: missing checksum" });
-    }
-    // Build the body to verify — exclude CHECKSUMHASH itself
-    const { CHECKSUMHASH, ...verifyBody } = pt;
-    const isValid = await verifyPaytmChecksum(verifyBody, CHECKSUMHASH);
-    if (!isValid || pt.STATUS !== "TXN_SUCCESS") {
-      return res.status(400).json({ error: "Payment verification failed" });
-    }
-  } else if (payment === "upi") {
-    // Demo mode (no keys configured) — accept without a real charge.
-    paymentStatus = "Paid (demo)";
-  }
-
+// Builds the order object stored in the database from cart items.
+function buildOrder(items, customer, extra) {
   const subtotal = items.reduce(
     (s, i) => s + (Number(i.price) || 0) * (Number(i.qty) || 0),
     0
   );
   const shippingFee = subtotal > 4999 ? 0 : 99;
-  const order = {
+  return {
     id: crypto.randomUUID(),
-    orderNo: "HW" + Date.now().toString().slice(-8),
     customer,
     items: items.map((i) => ({
       id: i.id,
@@ -441,12 +422,146 @@ app.post("/api/orders", async (req, res) => {
     subtotal,
     shippingFee,
     total: subtotal + shippingFee,
-    payment,
-    paymentStatus,
-    paymentId: pt?.TXNID || null,
-    status: "Confirmed",
+    payment: "online",
     createdAt: Date.now(),
+    ...extra,
   };
+}
+
+// Create a SmartGateway payment session for the current cart. The amount is
+// computed server-side, a pending order is recorded, and the shopper is sent
+// the hosted payment-page link to redirect to.
+app.post("/api/payments/hdfc/session", async (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!items.length) return res.status(400).json({ error: "Your cart is empty" });
+  const { customer, error } = readCustomer(req.body);
+  if (error) return res.status(400).json({ error });
+
+  if (!hdfcConfigured()) {
+    // No keys → tell the client to fall back to the demo flow.
+    return res.json({ configured: false });
+  }
+
+  // order_id must be unique, alphanumeric, < 21 chars.
+  const orderNo = "PE" + Date.now().toString();
+  // x-customerid is reused on the return status-check, so persist it with the
+  // order (inside the customer JSON column).
+  const customerId = "CUST" + crypto.randomUUID().replace(/-/g, "").slice(0, 14);
+  const customerWithId = { ...customer, customerId };
+  const order = buildOrder(items, customerWithId, {
+    orderNo,
+    paymentStatus: "Pending",
+    status: "Payment Pending",
+    paymentId: null,
+  });
+  insertOrder(order);
+
+  const returnUrl = `${PUBLIC_SERVER_URL}/api/payments/hdfc/return`;
+  try {
+    const { paymentLink } = await createHdfcSession(
+      orderNo,
+      order.total,
+      customerWithId,
+      returnUrl
+    );
+    res.json({ configured: true, paymentLink, orderNo });
+  } catch (err) {
+    updateOrderPayment(orderNo, {
+      paymentStatus: "Failed",
+      status: "Payment Failed",
+    });
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Return URL — the shopper lands here after HDFC's hosted payment page. We do
+// the mandatory server-to-server Order Status check to decide the outcome,
+// then redirect the browser back to the storefront.
+app.all("/api/payments/hdfc/return", async (req, res) => {
+  const orderNo = String(
+    req.query.order_id || req.body?.order_id || req.query.orderId || ""
+  ).trim();
+  const back = (status) =>
+    res.redirect(
+      `${CLIENT_URL}/checkout?status=${status}` +
+        (orderNo ? `&order=${encodeURIComponent(orderNo)}` : "")
+    );
+
+  if (!orderNo) return back("failed");
+  const order = getOrderByOrderNo(orderNo);
+  if (!order) return back("failed");
+  // Already finalised (e.g. duplicate return / webhook race) — don't re-charge.
+  if (order.paymentStatus && order.paymentStatus.startsWith("Paid")) {
+    return back("success");
+  }
+
+  try {
+    const statusData = await getHdfcOrderStatus(orderNo, order.customer.customerId);
+    const paid =
+      statusData.status === "CHARGED" &&
+      Math.abs(Number(statusData.amount) - Number(order.total)) < 0.01;
+    if (paid) {
+      const updated = updateOrderPayment(orderNo, {
+        paymentStatus: "Paid",
+        status: "Confirmed",
+        paymentId: statusData.txn_id || statusData.txn_uuid || orderNo,
+      });
+      await sendOrderEmail(updated);
+      return back("success");
+    }
+    updateOrderPayment(orderNo, {
+      paymentStatus: `Not paid (${statusData.status || "unknown"})`,
+      status: "Payment Failed",
+    });
+    return back("failed");
+  } catch (err) {
+    console.error(`[hdfc] status check failed for ${orderNo}:`, err.message);
+    return back("failed");
+  }
+});
+
+// Public: fetch a single order by its order number (used by the storefront to
+// show the confirmation screen after returning from the gateway).
+app.get("/api/orders/:orderNo", (req, res) => {
+  const order = getOrderByOrderNo(req.params.orderNo);
+  if (!order) return res.status(404).json({ error: "Order not found" });
+  // Return only what the confirmation screen needs.
+  res.json({
+    orderNo: order.orderNo,
+    customer: { name: order.customer.name, email: order.customer.email },
+    items: order.items,
+    subtotal: order.subtotal,
+    shippingFee: order.shippingFee,
+    total: order.total,
+    paymentStatus: order.paymentStatus,
+    status: order.status,
+    createdAt: order.createdAt,
+  });
+});
+
+// ----- Orders (demo checkout) ---------------------------------------------
+// Used only when the real gateway is NOT configured, to simulate a paid order.
+// When HDFC keys are present, real payments must go through the session +
+// return flow above, so this endpoint refuses to record an order directly.
+app.post("/api/orders", async (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!items.length) return res.status(400).json({ error: "Your cart is empty" });
+
+  const { customer, error } = readCustomer(req.body);
+  if (error) return res.status(400).json({ error });
+
+  if (hdfcConfigured()) {
+    return res.status(400).json({
+      error: "Please complete payment through the secure gateway.",
+    });
+  }
+
+  const order = buildOrder(items, customer, {
+    orderNo: "PE" + Date.now().toString().slice(-8),
+    paymentStatus: "Paid (demo)",
+    paymentId: null,
+    status: "Confirmed",
+  });
   insertOrder(order);
 
   const emailResult = await sendOrderEmail(order);

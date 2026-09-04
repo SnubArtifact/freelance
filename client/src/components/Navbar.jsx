@@ -25,7 +25,7 @@ export default function Navbar() {
     <header className="nav">
       <div className="nav-inner">
         <Link to="/" className="brand brand-image" onClick={() => setOpen(false)}>
-          <img className="brand-logo-full" src="/logo.jpeg" alt="Haveli Wale Sarees" />
+          <img className="brand-logo-full" src="/logo.jpeg" alt="Pankaj Enterprises Sarees" />
         </Link>
 
         <button

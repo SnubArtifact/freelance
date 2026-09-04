@@ -27,7 +27,7 @@ export default function AdminLogin() {
     <div className="admin-login">
       <form className="login-card" onSubmit={submit}>
         <Link to="/" className="login-brand">
-          <span className="brand-mark">Haveli Wale</span>
+          <span className="brand-mark">Pankaj Enterprises</span>
           <span className="brand-sub">SAREES</span>
         </Link>
         <h1>Admin Login</h1>

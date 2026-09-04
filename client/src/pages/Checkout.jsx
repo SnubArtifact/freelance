@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useCart } from "../context/CartContext.jsx";
 import { api, formatPrice } from "../api.js";
 import { apiUrl } from "../config.js";
-import { loadPaytmSDK, openPaytm } from "../paytm.js";
 
 /* ─── Demo Payment Modal ───────────────────────────────────────────────────── */
 function DemoPaymentModal({ amount, onSuccess, onCancel }) {
@@ -18,11 +17,9 @@ function DemoPaymentModal({ amount, onSuccess, onCancel }) {
     setProcessing(true);
     setTimeout(() => {
       onSuccess({
-        STATUS: "TXN_SUCCESS",
-        TXNID: "DEMO_" + Date.now(),
-        ORDERID: "DEMO_ORDER",
-        RESPMSG: "Txn Success",
-        CHECKSUMHASH: "DEMO_CHECKSUM",
+        razorpay_payment_id: "demo_pay_" + Date.now(),
+        razorpay_order_id: "demo_order_" + Date.now(),
+        demo: true,
       });
     }, 1800);
   }
@@ -39,7 +36,7 @@ function DemoPaymentModal({ amount, onSuccess, onCancel }) {
         {/* Header */}
         <div className="demo-modal-header">
           <div className="demo-modal-brand">
-            <span className="demo-paytm-logo">Paytm</span>
+            <span className="demo-paytm-logo">SmartGateway</span>
             <span className="demo-modal-badge">Demo Mode</span>
           </div>
           <button className="demo-modal-close" onClick={onCancel} aria-label="Close">✕</button>
@@ -175,12 +172,38 @@ export default function Checkout() {
     payment: "upi",
   });
 
-  // Is the real Paytm gateway configured on the server?
+  const [params, setParams] = useSearchParams();
+
+  // Is the real HDFC SmartGateway configured on the server?
   useEffect(() => {
     fetch(apiUrl("/api/payments/config"))
       .then((r) => r.json())
       .then((d) => setPayLive(Boolean(d.configured)))
       .catch(() => setPayLive(false));
+  }, []);
+
+  // Handle the redirect back from the gateway (?status=success|failed&order=…).
+  useEffect(() => {
+    const status = params.get("status");
+    const orderNo = params.get("order");
+    if (!status) return;
+    // Clear the query so a refresh doesn't re-trigger this.
+    setParams({}, { replace: true });
+    if (status === "success" && orderNo) {
+      api
+        .getOrder(orderNo)
+        .then((order) => {
+          setPlacedOrder(order);
+          clearCart();
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        })
+        .catch(() =>
+          setError("We couldn't load your order. Please contact us with your payment details.")
+        );
+    } else if (status === "failed") {
+      setError("Your payment didn't go through. No amount was charged — please try again.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const shipping = subtotal > 4999 ? 0 : 99;
@@ -199,75 +222,42 @@ export default function Checkout() {
     pincode: form.pincode,
   });
 
-  async function saveOrder(extra = {}) {
-    const order = await api.createOrder({
-      items,
-      customer: customerDetails(),
-      payment: form.payment,
-      ...extra,
-    });
-    setPlacedOrder(order);
-    clearCart();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
   async function placeOrder(e) {
     e.preventDefault();
     setError("");
     setSubmitting(true);
     try {
-      // Online payment — initiate a Paytm transaction on the server.
-      const paytmData = await api.initiatePaytmPayment(items);
+      // Create a SmartGateway session on the server.
+      const data = await api.createHdfcSession(items, customerDetails());
 
-      // No keys configured → show demo payment modal instead of skipping.
-      if (!paytmData.configured) {
-        setDemoModal({ amount: paytmData.amount });
+      // No keys configured → show the demo payment modal instead.
+      if (!data.configured) {
+        setDemoModal({ amount: Math.round(total * 100) });
         setSubmitting(false);
         return;
       }
 
-      // Real Paytm gateway configured — load SDK and open overlay.
-      const loaded = await loadPaytmSDK(paytmData.mid);
-      if (!loaded) throw new Error("Could not load the payment gateway");
-
-      await new Promise((resolve, reject) => {
-        openPaytm({
-          mid: paytmData.mid,
-          txnToken: paytmData.txnToken,
-          orderId: paytmData.orderId,
-          amount: (paytmData.amount / 100).toFixed(2),
-          onSuccess: async (response) => {
-            try {
-              await saveOrder({ paytm: response });
-              resolve();
-            } catch (err) {
-              reject(err);
-            }
-          },
-          onCancel: () => {
-            setSubmitting(false);
-            reject(new Error("Payment cancelled"));
-          },
-          onError: (msg) => {
-            reject(new Error(msg || "Payment failed"));
-          },
-        });
-      });
+      // Real gateway configured — redirect to HDFC's hosted payment page.
+      if (!data.paymentLink) throw new Error("Could not start the payment");
+      window.location.href = data.paymentLink;
     } catch (err) {
-      if (err.message !== "Payment cancelled") {
-        setError(err.message || "Could not place order");
-      }
-    } finally {
+      setError(err.message || "Could not place order");
       setSubmitting(false);
     }
   }
 
-  // Called when demo modal payment succeeds
-  async function handleDemoSuccess(response) {
+  // Called when the demo modal payment succeeds (gateway not configured).
+  async function handleDemoSuccess() {
     setDemoModal(null);
     setSubmitting(true);
     try {
-      await saveOrder({ paytm: response });
+      const order = await api.createOrder({
+        items,
+        customer: customerDetails(),
+      });
+      setPlacedOrder(order);
+      clearCart();
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
       setError(err.message || "Could not place order");
     } finally {
@@ -376,7 +366,7 @@ export default function Checkout() {
                 <span className="pay-label">
                   Online Payment (UPI, Card, Netbanking)
                   <span className="pay-badge">
-                    {payLive ? "Secured by Paytm" : "Demo mode"}
+                    {payLive ? "Secured by HDFC SmartGateway" : "Demo mode"}
                   </span>
                 </span>
               </div>
@@ -411,7 +401,7 @@ export default function Checkout() {
             </button>
             <p className="sum-note center">
               {payLive
-                ? "You'll be redirected to Paytm's secure checkout."
+                ? "You'll be redirected to HDFC's secure payment page."
                 : "A demo payment screen will open to simulate the flow."}
             </p>
           </aside>

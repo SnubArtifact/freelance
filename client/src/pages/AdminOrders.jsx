@@ -109,7 +109,7 @@ export default function AdminOrders() {
                       {o.customer?.city} — {o.customer?.pincode}
                     </p>
                     {o.paymentId && (
-                      <p className="ode-pid">Paytm TXNID: {o.paymentId}</p>
+                      <p className="ode-pid">Payment ID: {o.paymentId}</p>
                     )}
                   </div>
                 </div>

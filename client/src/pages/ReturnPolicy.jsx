@@ -4,7 +4,7 @@ export default function ReturnPolicy() {
       <div className="page-head">
         <span className="eyebrow">Legal</span>
         <h1>Return &amp; Refund Policy</h1>
-        <p>How returns and refunds work at Haveli Wale.</p>
+        <p>How returns and refunds work at Pankaj Enterprises.</p>
       </div>
 
       <div className="policy-body">
@@ -67,7 +67,7 @@ export default function ReturnPolicy() {
           <li>Once we receive and inspect the returned saree, we will confirm
             the outcome by email within 3–4 working days.</li>
           <li>Approved refunds are issued to the original payment method
-            (Paytm / UPI / card / net banking) within 5–7 working days.</li>
+            (UPI / card / net banking) within 5–7 working days.</li>
           <li>For any prepaid order shipping cost, that portion is
             non-refundable except when the return is our fault.</li>
         </ul>
@@ -88,7 +88,7 @@ export default function ReturnPolicy() {
 
         <h2>9. Contact</h2>
         <p>
-          Haveli Wale<br />
+          Pankaj Enterprises<br />
           Near Kanya Patshala, Nahar wali gali, Sikar, Rajasthan – 332001<br />
           Phone / WhatsApp: +91 96258 61356<br />
           Email: <a href="mailto:hello@haveliwale.com">hello@haveliwale.com</a>

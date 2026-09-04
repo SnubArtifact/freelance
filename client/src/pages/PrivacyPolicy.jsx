@@ -4,12 +4,12 @@ export default function PrivacyPolicy() {
       <div className="page-head">
         <span className="eyebrow">Legal</span>
         <h1>Privacy Policy</h1>
-        <p>How we handle your information at Haveli Wale.</p>
+        <p>How we handle your information at Pankaj Enterprises.</p>
       </div>
 
       <div className="policy-body">
         <p>
-          This Privacy Policy explains how Haveli Wale ("we", "us", "our")
+          This Privacy Policy explains how Pankaj Enterprises ("we", "us", "our")
           collects, uses, and protects the information you share with us when
           you visit haveliwale.com or place an order with us. By using the
           site, you agree to the practices described below.
@@ -20,7 +20,7 @@ export default function PrivacyPolicy() {
         <ul>
           <li>Your name, delivery address, phone number, and email address.</li>
           <li>Order details — items, quantities, and total amount.</li>
-          <li>Payment reference IDs from our payment gateway (Paytm). We do
+          <li>Payment reference IDs from our payment gateway (HDFC SmartGateway). We do
             <strong> not </strong>store your card number, UPI PIN, CVV, or bank
             login details on our servers.</li>
           <li>Basic technical information such as your browser type and
@@ -40,7 +40,7 @@ export default function PrivacyPolicy() {
         <p>We only share your details with:</p>
         <ul>
           <li>Our courier partners, so they can deliver your saree to you.</li>
-          <li>Our payment gateway (Paytm), for processing your payment.</li>
+          <li>Our payment gateway (HDFC SmartGateway), for processing your payment.</li>
           <li>Government or law enforcement agencies, only when legally
             required.</li>
         </ul>
@@ -83,7 +83,7 @@ export default function PrivacyPolicy() {
 
         <h2>9. Contact</h2>
         <p>
-          Haveli Wale<br />
+          Pankaj Enterprises<br />
           Near Kanya Patshala, Nahar wali gali, Sikar, Rajasthan – 332001<br />
           Phone: +91 96258 61356<br />
           Email: <a href="mailto:hello@haveliwale.com">hello@haveliwale.com</a>

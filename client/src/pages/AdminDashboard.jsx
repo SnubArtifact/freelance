@@ -153,7 +153,7 @@ export default function AdminDashboard() {
     <div className="admin">
       <header className="admin-bar">
         <Link to="/" className="brand">
-          <span className="brand-mark">Haveli Wale</span>
+          <span className="brand-mark">Pankaj Enterprises</span>
           <span className="brand-sub">ADMIN</span>
         </Link>
         <div className="admin-bar-actions">
