@@ -112,7 +112,11 @@ export default function ProductDetail() {
             <li>
               <span>Availability</span>
               <strong className={product.inStock ? "ok" : "no"}>
-                {product.inStock ? "In Stock" : "Sold Out"}
+                {!product.inStock
+                  ? "Sold Out"
+                  : product.stock > 0 && product.stock <= 5
+                  ? `Only ${product.stock} left`
+                  : "In Stock"}
               </strong>
             </li>
           </ul>

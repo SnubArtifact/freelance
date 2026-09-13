@@ -27,6 +27,19 @@ async function handle(res) {
   return res.json();
 }
 
+// For admin-only requests. A 401 means the server no longer accepts the saved
+// session (it expired, or the admin password changed). Drop the stale token
+// and send the admin back to sign in, instead of leaving a dashboard that
+// looks signed in but cannot save anything.
+async function handleAuthed(res) {
+  if (res.status === 401) {
+    setToken(null);
+    window.location.assign("/admin/login?expired=1");
+    throw new Error("Your session expired. Please sign in again.");
+  }
+  return handle(res);
+}
+
 function authHeaders(extra = {}) {
   const token = getToken();
   return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
@@ -51,7 +64,7 @@ export const api = {
   },
 
   async createProduct(data) {
-    return handle(
+    return handleAuthed(
       await fetch(apiUrl("/api/products"), {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
@@ -61,7 +74,7 @@ export const api = {
   },
 
   async updateProduct(id, data) {
-    return handle(
+    return handleAuthed(
       await fetch(apiUrl(`/api/products/${id}`), {
         method: "PUT",
         headers: authHeaders({ "Content-Type": "application/json" }),
@@ -70,8 +83,20 @@ export const api = {
     );
   },
 
+  // Adjust stock without touching the rest of the product. Pass { delta: 5 }
+  // to add five, or { stock: 12 } to set an absolute count.
+  async setStock(id, body) {
+    return handleAuthed(
+      await fetch(apiUrl(`/api/products/${id}/stock`), {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(body),
+      })
+    );
+  },
+
   async deleteProduct(id) {
-    return handle(
+    return handleAuthed(
       await fetch(apiUrl(`/api/products/${id}`), {
         method: "DELETE",
         headers: authHeaders(),
@@ -82,7 +107,7 @@ export const api = {
   async uploadImages(files) {
     const form = new FormData();
     [...files].forEach((f) => form.append("images", f));
-    return handle(
+    return handleAuthed(
       await fetch(apiUrl("/api/upload"), {
         method: "POST",
         headers: authHeaders(),
@@ -118,8 +143,14 @@ export const api = {
     return handle(await fetch(apiUrl(`/api/orders/${orderNo}`)));
   },
 
+  async checkSession() {
+    return handleAuthed(
+      await fetch(apiUrl("/api/admin/session"), { headers: authHeaders() })
+    );
+  },
+
   async adminOrders() {
-    return handle(
+    return handleAuthed(
       await fetch(apiUrl("/api/admin/orders"), { headers: authHeaders() })
     );
   },

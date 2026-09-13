@@ -335,15 +335,53 @@ app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: false }));
 app.use("/uploads", express.static(UPLOAD_DIR));
 
-// Very small token-based auth. For a single-owner shop this is enough; for a
-// public deployment, move to real auth + HTTPS.
-const tokens = new Set();
+// Admin sessions are signed tokens, not a list held in memory. The old
+// in-memory list was wiped by every restart (so by every Render deploy), which
+// signed the admin out on the server while the browser still looked signed
+// in, and every upload or save then failed with "Unauthorized".
+//
+// A token is base64url({ exp }) + "." + an HMAC of that, so the server can
+// check it without remembering anything. The key is derived from the admin
+// password unless ADMIN_TOKEN_SECRET is set, so changing the password signs
+// everyone out.
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const TOKEN_SECRET =
+  process.env.ADMIN_TOKEN_SECRET ||
+  crypto.createHash("sha256").update(`admin-token:${ADMIN_PASSWORD}`).digest("hex");
+
+function signToken(payload) {
+  return crypto.createHmac("sha256", TOKEN_SECRET).update(payload).digest("base64url");
+}
+
+function issueToken() {
+  const payload = Buffer.from(
+    JSON.stringify({ exp: Date.now() + TOKEN_TTL_MS })
+  ).toString("base64url");
+  return `${payload}.${signToken(payload)}`;
+}
+
+function verifyToken(token) {
+  const [payload, sig] = String(token || "").split(".");
+  if (!payload || !sig) return false;
+  const expected = Buffer.from(signToken(payload));
+  const given = Buffer.from(sig);
+  if (given.length !== expected.length) return false;
+  if (!crypto.timingSafeEqual(given, expected)) return false;
+  try {
+    const { exp } = JSON.parse(Buffer.from(payload, "base64url").toString());
+    return Number(exp) > Date.now();
+  } catch {
+    return false;
+  }
+}
 
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.replace("Bearer ", "").trim();
-  if (token && tokens.has(token)) return next();
-  return res.status(401).json({ error: "Unauthorized" });
+  if (verifyToken(token)) return next();
+  return res
+    .status(401)
+    .json({ error: "Your admin session has expired. Please sign in again." });
 }
 
 // ----- Image upload -------------------------------------------------------
@@ -369,11 +407,15 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }));
 app.post("/api/login", (req, res) => {
   const { password } = req.body || {};
   if (password === ADMIN_PASSWORD) {
-    const token = crypto.randomUUID();
-    tokens.add(token);
-    return res.json({ token });
+    return res.json({ token: issueToken() });
   }
   return res.status(401).json({ error: "Incorrect password" });
+});
+
+// Lets the admin panel confirm on load that its saved session is still
+// accepted, so an expired one is caught before the admin types anything.
+app.get("/api/admin/session", requireAuth, (_req, res) => {
+  res.json({ ok: true });
 });
 
 // ----- Payments (HDFC SmartGateway) ---------------------------------------
@@ -402,23 +444,87 @@ function readCustomer(body) {
   return { customer };
 }
 
-// Builds the order object stored in the database from cart items.
+/**
+ * Rebuilds the cart from the catalog on disk. The browser only gets to say
+ * WHICH product and HOW MANY — the price, name and image always come from the
+ * admin's catalog, never from the request. Without this a shopper could edit
+ * the request and pay any amount they liked.
+ *
+ * Also enforces availability. Returns { items } or { error }.
+ */
+function resolveCartItems(rawItems) {
+  const catalog = readProducts() || [];
+  const resolved = [];
+
+  for (const raw of rawItems) {
+    const product = catalog.find((p) => p.id === raw.id);
+    if (!product) {
+      return { error: `"${raw.name || "An item"}" is no longer available.` };
+    }
+
+    const qty = Math.max(1, Math.floor(Number(raw.qty) || 1));
+
+    if (product.inStock === false) {
+      return { error: `${product.name} is sold out.` };
+    }
+    // stock === null/undefined means "not tracked" — availability is governed
+    // by the inStock flag alone, which is how older products behave.
+    if (product.stock !== null && product.stock !== undefined) {
+      if (product.stock <= 0) {
+        return { error: `${product.name} is sold out.` };
+      }
+      if (qty > product.stock) {
+        return {
+          error:
+            product.stock === 1
+              ? `Only 1 left of ${product.name}.`
+              : `Only ${product.stock} left of ${product.name}.`,
+        };
+      }
+    }
+
+    resolved.push({
+      id: product.id,
+      name: product.name,
+      price: Number(product.price) || 0,
+      qty,
+      image: product.images?.[0] || "",
+    });
+  }
+
+  return { items: resolved };
+}
+
+/**
+ * Reduces tracked stock once an order is actually paid for. Products with an
+ * untracked stock level (null) are left alone. An item that reaches zero is
+ * flipped to sold out so it stops appearing as buyable.
+ */
+function decrementStock(items) {
+  const catalog = readProducts() || [];
+  let changed = false;
+
+  for (const item of items) {
+    const product = catalog.find((p) => p.id === item.id);
+    if (!product) continue;
+    if (product.stock === null || product.stock === undefined) continue;
+    product.stock = Math.max(0, product.stock - item.qty);
+    if (product.stock === 0) product.inStock = false;
+    changed = true;
+  }
+
+  if (changed) writeProducts(catalog);
+}
+
+// Builds the order object stored in the database. `items` must already have
+// been through resolveCartItems, so the prices here are the catalog's.
 function buildOrder(items, customer, extra) {
-  const subtotal = items.reduce(
-    (s, i) => s + (Number(i.price) || 0) * (Number(i.qty) || 0),
-    0
-  );
+  const subtotal = items.reduce((s, i) => s + i.price * i.qty, 0);
   const shippingFee = subtotal > 4999 ? 0 : 99;
   return {
     id: crypto.randomUUID(),
     customer,
-    items: items.map((i) => ({
-      id: i.id,
-      name: i.name,
-      price: Number(i.price) || 0,
-      qty: Number(i.qty) || 1,
-      image: i.image || "",
-    })),
+    items,
     subtotal,
     shippingFee,
     total: subtotal + shippingFee,
@@ -432,10 +538,14 @@ function buildOrder(items, customer, extra) {
 // computed server-side, a pending order is recorded, and the shopper is sent
 // the hosted payment-page link to redirect to.
 app.post("/api/payments/hdfc/session", async (req, res) => {
-  const items = Array.isArray(req.body?.items) ? req.body.items : [];
-  if (!items.length) return res.status(400).json({ error: "Your cart is empty" });
+  const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!rawItems.length) return res.status(400).json({ error: "Your cart is empty" });
   const { customer, error } = readCustomer(req.body);
   if (error) return res.status(400).json({ error });
+
+  // Prices and availability come from the catalog, never from the browser.
+  const { items, error: cartError } = resolveCartItems(rawItems);
+  if (cartError) return res.status(409).json({ error: cartError });
 
   if (!hdfcConfigured()) {
     // No keys → tell the client to fall back to the demo flow.
@@ -470,7 +580,12 @@ app.post("/api/payments/hdfc/session", async (req, res) => {
       paymentStatus: "Failed",
       status: "Payment Failed",
     });
-    res.status(502).json({ error: err.message });
+    // Log the gateway's own message for us, but never show it to the shopper —
+    // it can contain merchant ids and key diagnostics.
+    console.error(`[hdfc] session failed for ${orderNo}:`, err.message);
+    res.status(502).json({
+      error: "We couldn't reach the payment gateway. Please try again in a moment.",
+    });
   }
 });
 
@@ -506,6 +621,10 @@ app.all("/api/payments/hdfc/return", async (req, res) => {
         status: "Confirmed",
         paymentId: statusData.txn_id || statusData.txn_uuid || orderNo,
       });
+      // Only now, once the money is actually taken, does stock come down. The
+      // early return above for already-Paid orders keeps a duplicate return
+      // from decrementing twice.
+      decrementStock(updated.items);
       await sendOrderEmail(updated);
       return back("success");
     }
@@ -544,8 +663,8 @@ app.get("/api/orders/:orderNo", (req, res) => {
 // When HDFC keys are present, real payments must go through the session +
 // return flow above, so this endpoint refuses to record an order directly.
 app.post("/api/orders", async (req, res) => {
-  const items = Array.isArray(req.body?.items) ? req.body.items : [];
-  if (!items.length) return res.status(400).json({ error: "Your cart is empty" });
+  const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!rawItems.length) return res.status(400).json({ error: "Your cart is empty" });
 
   const { customer, error } = readCustomer(req.body);
   if (error) return res.status(400).json({ error });
@@ -556,6 +675,10 @@ app.post("/api/orders", async (req, res) => {
     });
   }
 
+  // Prices and availability come from the catalog, never from the browser.
+  const { items, error: cartError } = resolveCartItems(rawItems);
+  if (cartError) return res.status(409).json({ error: cartError });
+
   const order = buildOrder(items, customer, {
     orderNo: "PE" + Date.now().toString().slice(-8),
     paymentStatus: "Paid (demo)",
@@ -563,6 +686,7 @@ app.post("/api/orders", async (req, res) => {
     status: "Confirmed",
   });
   insertOrder(order);
+  decrementStock(order.items);
 
   const emailResult = await sendOrderEmail(order);
   res.status(201).json({ ...order, emailSent: emailResult.sent });
@@ -602,7 +726,17 @@ function normalizeProduct(body) {
     images: Array.isArray(body.images) ? body.images.filter(Boolean) : [],
     featured: Boolean(body.featured),
     inStock: body.inStock === undefined ? true : Boolean(body.inStock),
+    // How many are physically in hand. null means "don't track a count for
+    // this one" — availability then rests on the inStock flag alone, which is
+    // how every product created before this field existed behaves.
+    stock: normalizeStock(body.stock),
   };
+}
+
+function normalizeStock(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) ? Math.max(0, n) : null;
 }
 
 app.post("/api/products", requireAuth, (req, res) => {
@@ -625,6 +759,37 @@ app.put("/api/products/:id", requireAuth, (req, res) => {
   products[idx] = { ...products[idx], ...data };
   writeProducts(products);
   res.json(products[idx]);
+});
+
+// Restock: add (or remove, with a negative delta) units without touching the
+// rest of the product. Sending { stock: n } instead sets an absolute count.
+app.post("/api/products/:id/stock", requireAuth, (req, res) => {
+  const products = readProducts() || [];
+  const product = products.find((p) => p.id === req.params.id);
+  if (!product) return res.status(404).json({ error: "Not found" });
+
+  if (req.body?.stock !== undefined) {
+    product.stock = normalizeStock(req.body.stock);
+  } else {
+    const delta = Math.floor(Number(req.body?.delta));
+    if (!Number.isFinite(delta)) {
+      return res.status(400).json({ error: "Send a numeric delta or stock" });
+    }
+    // Adding to an untracked product starts tracking it from zero.
+    product.stock = Math.max(0, (product.stock ?? 0) + delta);
+  }
+
+  // Restocking something that sold out puts it back on sale.
+  if (product.stock === null) {
+    // untracked again — leave inStock as the admin set it
+  } else if (product.stock > 0) {
+    product.inStock = true;
+  } else {
+    product.inStock = false;
+  }
+
+  writeProducts(products);
+  res.json(product);
 });
 
 app.delete("/api/products/:id", requireAuth, (req, res) => {

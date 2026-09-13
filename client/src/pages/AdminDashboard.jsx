@@ -15,6 +15,7 @@ const EMPTY = {
   images: [],
   featured: false,
   inStock: true,
+  stock: "",
 };
 
 const CATEGORIES = [
@@ -43,6 +44,11 @@ export default function AdminDashboard() {
     api.listProducts().then(setProducts).catch(() => {});
   }
   useEffect(load, []);
+  // Catch an expired session up front. On a 401, checkSession sends the
+  // admin to the login page before they fill in the form.
+  useEffect(() => {
+    api.checkSession().catch(() => {});
+  }, []);
 
   function notify(text, kind = "ok") {
     setMessage({ text, kind });
@@ -71,9 +77,32 @@ export default function AdminDashboard() {
       images: p.images || [],
       featured: !!p.featured,
       inStock: p.inStock !== false,
+      stock: p.stock ?? "",
     });
     setEditingId(p.id);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function addStock(p) {
+    const current = p.stock ?? 0;
+    const answer = window.prompt(
+      `How many more "${p.name}" are you adding?\n\nCurrently tracked: ${
+        p.stock ?? "not tracked"
+      }`,
+      "1"
+    );
+    if (answer === null) return;
+    const delta = Math.floor(Number(answer));
+    if (!Number.isFinite(delta) || delta === 0) {
+      return notify("Enter a whole number", "err");
+    }
+    try {
+      const updated = await api.setStock(p.id, { delta });
+      notify(`${p.name}: ${current} → ${updated.stock} in stock`);
+      load();
+    } catch (err) {
+      notify(err.message || "Could not update stock", "err");
+    }
   }
 
   async function handleFiles(e) {
@@ -238,12 +267,20 @@ export default function AdminDashboard() {
             </label>
           </div>
 
-          <label className="field">
-            <span>Color</span>
-            <input value={form.color}
-              onChange={(e) => update("color", e.target.value)}
-              placeholder="e.g. Maroon & Gold" />
-          </label>
+          <div className="field-row">
+            <label className="field">
+              <span>Color</span>
+              <input value={form.color}
+                onChange={(e) => update("color", e.target.value)}
+                placeholder="e.g. Maroon & Gold" />
+            </label>
+            <label className="field">
+              <span>Stock (how many you have)</span>
+              <input type="number" min="0" value={form.stock}
+                onChange={(e) => update("stock", e.target.value)}
+                placeholder="blank = don't track a count" />
+            </label>
+          </div>
 
           {/* Images */}
           <div className="field">
@@ -321,9 +358,18 @@ export default function AdminDashboard() {
                       {p.category} · {formatPrice(p.price)}
                       {p.featured && <em className="tag">Featured</em>}
                       {!p.inStock && <em className="tag muted-tag">Sold out</em>}
+                      {p.stock !== null && p.stock !== undefined && (
+                        <em className={p.stock === 0 ? "tag muted-tag" : "tag"}>
+                          {p.stock} in stock
+                        </em>
+                      )}
                     </span>
                   </div>
                   <div className="admin-row-actions">
+                    <button className="icon-btn" title="Add stock"
+                      onClick={() => addStock(p)}>
+                      + Stock
+                    </button>
                     <button className="icon-btn" onClick={() => startEdit(p)}>
                       Edit
                     </button>

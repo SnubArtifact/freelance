@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { api, setToken } from "../api.js";
 
 export default function AdminLogin() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // Set by api.js when the server turned down a saved session.
+  const expired = params.has("expired");
 
   async function submit(e) {
     e.preventDefault();
@@ -44,7 +47,11 @@ export default function AdminLogin() {
           />
         </label>
 
-        {error && <div className="alert">{error}</div>}
+        {error ? (
+          <div className="alert">{error}</div>
+        ) : expired ? (
+          <div className="alert">Your session expired. Please sign in again.</div>
+        ) : null}
 
         <button className="btn btn-primary full" disabled={loading}>
           {loading ? "Signing in…" : "Sign In"}
