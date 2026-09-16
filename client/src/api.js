@@ -143,6 +143,13 @@ export const api = {
     return handle(await fetch(apiUrl(`/api/orders/${orderNo}`)));
   },
 
+  // Admin-only: why is the payment gateway refusing? Makes no payment.
+  async diagnosePayments() {
+    return handleAuthed(
+      await fetch(apiUrl("/api/admin/payments/diagnose"), { headers: authHeaders() })
+    );
+  },
+
   async checkSession() {
     return handleAuthed(
       await fetch(apiUrl("/api/admin/session"), { headers: authHeaders() })

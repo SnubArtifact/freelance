@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, setToken, formatPrice } from "../api.js";
 import { assetUrl } from "../config.js";
 import AdminOrders from "./AdminOrders.jsx";
+import PaymentCheck from "../components/PaymentCheck.jsx";
 
 const EMPTY = {
   name: "",
@@ -45,9 +46,14 @@ export default function AdminDashboard() {
   }
   useEffect(load, []);
   // Catch an expired session up front. On a 401, checkSession sends the
-  // admin to the login page before they fill in the form.
+  // admin to the login page before they fill in the form. The reply also says
+  // whether the server keeps data across restarts.
+  const [storage, setStorage] = useState(null);
   useEffect(() => {
-    api.checkSession().catch(() => {});
+    api
+      .checkSession()
+      .then((s) => setStorage(s.storage || null))
+      .catch(() => {});
   }, []);
 
   function notify(text, kind = "ok") {
@@ -207,8 +213,19 @@ export default function AdminDashboard() {
 
       {message && <div className={`toast ${message.kind}`}>{message.text}</div>}
 
+      {storage?.persistent === false && (
+        <div className="storage-warning" role="alert">
+          <strong>Changes you make here will not be kept.</strong> This server has
+          no permanent storage, so sarees, photos, stock and orders are erased
+          whenever it restarts or wakes from sleep. In Render, add a disk at{" "}
+          <code>/var/data</code> and set <code>DATA_DIR=/var/data</code>. This
+          warning goes away once that is done.
+        </div>
+      )}
+
       {view === "orders" ? (
         <div className="admin-orders-wrap">
+          <PaymentCheck />
           <AdminOrders />
         </div>
       ) : (

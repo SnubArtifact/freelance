@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { useCart } from "../context/CartContext.jsx";
+import { useCart, useCartCheck } from "../context/CartContext.jsx";
 import { api, formatPrice } from "../api.js";
 import { apiUrl } from "../config.js";
 
@@ -174,6 +174,10 @@ export default function Checkout() {
 
   const [params, setParams] = useSearchParams();
 
+  // Drops sarees that were deleted or sold out since they were added, so a
+  // stale cart can't stop the payment page from opening.
+  const { notice: cartNotice, check: checkCart } = useCartCheck();
+
   // Is the real HDFC SmartGateway configured on the server?
   useEffect(() => {
     fetch(apiUrl("/api/payments/config"))
@@ -243,6 +247,10 @@ export default function Checkout() {
     } catch (err) {
       setError(err.message || "Could not place order");
       setSubmitting(false);
+      // If the server turned an item down, refresh the cart. When that removes
+      // something, the cart notice explains it, so drop the duplicate error.
+      const dropped = await checkCart();
+      if (dropped.length) setError("");
     }
   }
 
@@ -296,7 +304,7 @@ export default function Checkout() {
       <div className="page">
         <div className="empty-state">
           <h1>Nothing to check out</h1>
-          <p>Your cart is empty.</p>
+          <p>{cartNotice || "Your cart is empty."}</p>
           <Link to="/collection" className="btn btn-primary">Browse Collection</Link>
         </div>
       </div>
@@ -393,6 +401,7 @@ export default function Checkout() {
             <div className="sum-row total">
               <span>Total</span><span>{formatPrice(total)}</span>
             </div>
+            {cartNotice && <div className="alert">{cartNotice}</div>}
             {error && <div className="alert">{error}</div>}
             <button type="submit" className="btn btn-primary full" disabled={submitting}>
               {submitting

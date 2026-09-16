@@ -9,6 +9,8 @@ import {
   getOrderByOrderNo,
   updateOrderPayment,
 } from "./db.js";
+import { diagnoseHdfc } from "./hdfcDiagnose.js";
+import { checkStorage } from "./storage.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -43,12 +45,15 @@ const emailConfigured = () => Boolean(SMTP_HOST && SMTP_USER && SMTP_PASS);
 // back to the storefront afterwards:
 //   PUBLIC_SERVER_URL   — this server's public https origin (return_url host)
 //   CLIENT_URL          — the storefront origin to return the shopper to
-const HDFC_API_KEY = process.env.HDFC_API_KEY || "";
-const HDFC_MERCHANT_ID = process.env.HDFC_MERCHANT_ID || "";
+// Trimmed because a space or newline pasted into a dashboard field is
+// invisible there, but makes HDFC reject the key as invalid.
+const HDFC_API_KEY = (process.env.HDFC_API_KEY || "").trim();
+const HDFC_MERCHANT_ID = (process.env.HDFC_MERCHANT_ID || "").trim();
 const HDFC_CLIENT_ID =
-  process.env.HDFC_CLIENT_ID || HDFC_MERCHANT_ID || "";
-const HDFC_ENV = (process.env.HDFC_ENV || "production").toLowerCase();
-const HDFC_RESELLER_ID = process.env.HDFC_RESELLER_ID || "hdfc_reseller";
+  (process.env.HDFC_CLIENT_ID || "").trim() || HDFC_MERCHANT_ID || "";
+const HDFC_ENV = (process.env.HDFC_ENV || "production").trim().toLowerCase();
+const HDFC_RESELLER_ID =
+  (process.env.HDFC_RESELLER_ID || "").trim() || "hdfc_reseller";
 const HDFC_BASE_URL =
   process.env.HDFC_BASE_URL ||
   (HDFC_ENV === "sandbox"
@@ -63,6 +68,9 @@ const CLIENT_URL = (
 ).replace(/\/$/, "");
 
 const hdfcConfigured = () => Boolean(HDFC_API_KEY && HDFC_MERCHANT_ID);
+
+// Most recent session failure, shown in the admin panel's payment check.
+let lastHdfcError = null;
 
 // Basic-auth header: base64 of "<api_key>:" (API key as username, no password).
 function hdfcAuthHeaders(customerId) {
@@ -140,6 +148,15 @@ const DB_FILE = path.join(DATA_DIR, "products.json");
 
 for (const dir of [DATA_DIR, UPLOAD_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+// Whether DATA_DIR survives a restart. Without a persistent disk, the catalog,
+// photos and orders are erased and the sample sarees come back.
+const STORAGE = checkStorage(DATA_DIR, __dirname);
+if (!STORAGE.persistent) {
+  console.warn(
+    `[storage] ${DATA_DIR} is not on a persistent disk. Products, photos and orders will be erased on the next restart. Add a Render disk at /var/data and set DATA_DIR=/var/data.`
+  );
 }
 
 // ----- Tiny JSON "database" -----------------------------------------------
@@ -413,14 +430,45 @@ app.post("/api/login", (req, res) => {
 });
 
 // Lets the admin panel confirm on load that its saved session is still
-// accepted, so an expired one is caught before the admin types anything.
+// accepted, so an expired one is caught before the admin types anything. It
+// also reports whether data is on permanent storage, for the warning banner.
 app.get("/api/admin/session", requireAuth, (_req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, storage: STORAGE });
 });
 
 // ----- Payments (HDFC SmartGateway) ---------------------------------------
 app.get("/api/payments/config", (_req, res) => {
   res.json({ configured: hdfcConfigured() });
+});
+
+// Admin-only: explains in plain words why the gateway is refusing payments,
+// without exposing the API key. Makes no payment and creates no order.
+app.get("/api/admin/payments/diagnose", requireAuth, async (_req, res) => {
+  const report = await diagnoseHdfc({
+    apiKey: HDFC_API_KEY,
+    merchantId: HDFC_MERCHANT_ID,
+    clientId: HDFC_CLIENT_ID,
+    resellerId: HDFC_RESELLER_ID,
+    env: HDFC_ENV,
+  });
+  // HDFC sends the shopper back to PUBLIC_SERVER_URL, and requires https.
+  const returnUrlOk =
+    /^https:\/\//.test(PUBLIC_SERVER_URL) &&
+    !/localhost|127\.0\.0\.1/.test(PUBLIC_SERVER_URL);
+  if (report.configured && !returnUrlOk) {
+    report.steps.push(
+      `PUBLIC_SERVER_URL is "${PUBLIC_SERVER_URL}". HDFC needs this server's public https address to send shoppers back to — set it and redeploy.`
+    );
+  }
+  res.json({
+    ...report,
+    ok: report.ok && returnUrlOk,
+    baseUrl: HDFC_BASE_URL,
+    publicServerUrl: PUBLIC_SERVER_URL,
+    returnUrlOk,
+    clientUrl: CLIENT_URL,
+    lastError: lastHdfcError,
+  });
 });
 
 // Normalises + validates the checkout customer. Returns { customer } or
@@ -581,8 +629,10 @@ app.post("/api/payments/hdfc/session", async (req, res) => {
       status: "Payment Failed",
     });
     // Log the gateway's own message for us, but never show it to the shopper —
-    // it can contain merchant ids and key diagnostics.
+    // it can contain merchant ids and key diagnostics. The admin panel's
+    // payment check shows the most recent one.
     console.error(`[hdfc] session failed for ${orderNo}:`, err.message);
+    lastHdfcError = { at: Date.now(), orderNo, message: err.message };
     res.status(502).json({
       error: "We couldn't reach the payment gateway. Please try again in a moment.",
     });

@@ -1,17 +1,19 @@
 import { Link } from "react-router-dom";
-import { useCart } from "../context/CartContext.jsx";
+import { useCart, useCartCheck } from "../context/CartContext.jsx";
 import { formatPrice } from "../api.js";
 import { assetUrl } from "../config.js";
 
 export default function Cart() {
   const { items, updateQty, removeFromCart, subtotal } = useCart();
+  // Drops sarees that were deleted or sold out since they were added.
+  const { notice } = useCartCheck();
 
   if (!items.length) {
     return (
       <div className="page">
         <div className="empty-state">
           <h1>Your cart is empty</h1>
-          <p>Looks like you haven't added any sarees yet.</p>
+          <p>{notice || "Looks like you haven't added any sarees yet."}</p>
           <Link to="/collection" className="btn btn-primary">
             Browse Collection
           </Link>
@@ -27,6 +29,8 @@ export default function Cart() {
       <div className="page-head">
         <h1>Your Cart</h1>
       </div>
+
+      {notice && <div className="alert">{notice}</div>}
 
       <div className="cart-grid">
         <div className="cart-items">

@@ -825,3 +825,21 @@ main { flex: 1; }
   padding: 0.7rem 1.4rem 1.1rem; margin: 0;
 }
 
+
+/* Admin: payment gateway check */
+.pay-check { margin-bottom: 1.4rem; }
+.pay-check-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.pay-check-head h3 { margin: 0 0 0.2rem; }
+.pay-check-head p { margin: 0; }
+.pay-check-verdict { margin: 1.1rem 0 0.6rem; padding: 0.8rem 1rem; border-radius: 10px; font-weight: 600; }
+.pay-check-verdict.ok { background: rgba(46, 125, 50, 0.1); color: var(--ok); }
+.pay-check-verdict.bad { background: rgba(179, 64, 31, 0.1); color: var(--err); }
+.pay-check ol { margin: 0.4rem 0 0; padding-left: 1.2rem; line-height: 1.65; }
+.pay-check-grid { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1.2rem; margin: 1.1rem 0 0; font-size: 0.85rem; }
+.pay-check-grid dt { opacity: 0.65; }
+.pay-check-grid dd { margin: 0; overflow-wrap: anywhere; }
+.pay-check-probes { margin-top: 0.9rem; font-size: 0.78rem; opacity: 0.7; line-height: 1.6; }
+
+/* Admin: warning when the server has no permanent storage */
+.storage-warning { width: min(1100px, calc(100% - 3rem)); margin: 1.2rem auto 0; padding: 0.95rem 1.2rem; border-radius: 12px; background: rgba(179, 64, 31, 0.12); border: 1px solid rgba(179, 64, 31, 0.35); color: var(--err); font-size: 0.9rem; line-height: 1.55; }
+.storage-warning code { background: rgba(179, 64, 31, 0.12); padding: 0.05rem 0.35rem; border-radius: 5px; font-size: 0.85em; }
