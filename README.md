@@ -7,9 +7,11 @@ checkout and receive an order confirmation by email (no account required).
 
 ## Tech
 - **Frontend:** React + Vite + React Router (elegant boutique UI)
-- **Backend:** Express + image uploads
-- **Database:** SQLite (via `better-sqlite3`) stores all orders; the product
-  catalog stays in a JSON file. No separate database server to run.
+- **Backend:** Express
+- **Database:** Postgres — Supabase (free plan) in production; an embedded
+  Postgres (PGlite) for local development, so there's nothing to install.
+  Sarees, stock, orders and a log of every payment step are kept here.
+- **Photos:** Supabase Storage in production; a local folder in development.
 - **Payments:** HDFC SmartGateway (UPI / cards / netbanking) via its hosted
   payment page, with a server-to-server order-status check before any order is
   marked paid; falls back to demo mode when keys aren't set
@@ -17,14 +19,18 @@ checkout and receive an order confirmation by email (no account required).
 ## Admin panel — two tabs
 - **Catalog:** add / edit / delete sarees (with image upload) — changes appear on
   the storefront instantly.
-- **Orders:** every customer order with revenue totals, customer contact,
-  shipping address, items, and payment status. Click a row to expand details.
+- **Orders:** every customer order with paid revenue, customer contact,
+  shipping address, items, and payment status. Click a row for details, the
+  order's payment log, and a **Check status with HDFC** button. The Orders tab
+  also has a **Check payment gateway** panel that explains, in plain words, any
+  problem with the HDFC keys.
 
 ## Project layout
 ```
 saree/
 ├── client/        # React storefront + admin UI
-├── server/        # Express API, image uploads, product data
+├── server/        # Express API, database, photos, HDFC integration
+│   └── test/      # automated tests (npm --prefix server test)
 └── package.json   # runs both together
 ```
 
@@ -43,6 +49,10 @@ npm run dev
 - Admin panel → http://localhost:5173/admin  (also linked at the bottom of the site)
 - API → http://localhost:5050
 
+Locally, everything is saved in `server/data/` (database in `pgdata/`, photos in
+`uploads/`, both git-ignored). A brand-new local database starts with a few sample
+sarees, or with the sarees from an old `server/data/products.json` if there is one.
+
 ### Admin password
 Default password is **`saree-admin`**. Change it by setting an environment
 variable before starting the server, e.g. on Windows PowerShell:
@@ -55,7 +65,8 @@ survives server restarts and deploys. Changing `ADMIN_PASSWORD` signs every
 admin out, because the signing key is derived from it (set
 `ADMIN_TOKEN_SECRET` to use a separate key instead). When a session expires,
 the admin panel sends you back to the login page with a "session expired"
-note instead of failing with "Unauthorized".
+note instead of failing with "Unauthorized". After 10 wrong passwords from one
+address, sign-in is refused for 15 minutes.
 
 Always set your own `ADMIN_PASSWORD` in production — with the default, anyone
 who knows it can sign in.
@@ -63,10 +74,12 @@ who knows it can sign in.
 ## Using the admin panel
 1. Go to `/admin`, sign in with the password.
 2. Fill in saree name, price, category, fabric, color, description.
-3. Upload images (stored on the server) **or** paste an image URL.
+3. Upload images **or** paste an image URL. Photos are shrunk in the browser
+   before upload (longest side 1600px) so the shop loads quickly.
 4. Tick **Feature on homepage** to show it in the hero/featured section.
 5. Save — it appears in the storefront collection immediately.
-6. Edit or delete any saree from the list on the right.
+6. Edit or delete any saree from the list on the right. Photos no saree uses any
+   more are deleted automatically.
 
 ## Stock
 Each saree has an optional **stock count**, set in the admin form or with the
@@ -82,11 +95,48 @@ Each saree has an optional **stock count**, set in the admin form or with the
 
 Stock only comes down on **paid** orders — an abandoned payment leaves it alone.
 
+## Keeping your data: Supabase (free)
+Render's free plan erases its disk on every restart, deploy and wake-up from
+sleep, so in production the shop keeps everything in Supabase instead. The
+server creates its tables and the public `sarees` photo bucket by itself.
+
+1. Create a free project at [supabase.com](https://supabase.com). Pick the region
+   closest to the Render server (Render's Oregon → Supabase **West US**), and save
+   the database password somewhere safe.
+2. **Connect** → **Session pooler** → copy the connection string and put your
+   database password in it. (Use the *Session pooler*: Render needs IPv4, which
+   the direct connection doesn't offer.) If the password has special characters
+   such as `@ # / ?`, [URL-encode](https://www.urlencoder.org/) them.
+3. **Project Settings → API Keys** → copy a **secret key** (`sb_secret_…`, or the
+   legacy `service_role` key), and the **Project URL** (`https://….supabase.co`).
+4. In Render → your service → **Environment**, set:
+   ```
+   DATABASE_URL=postgresql://postgres.<ref>:<password>@<pooler-host>:5432/postgres
+   SUPABASE_URL=https://<ref>.supabase.co
+   SUPABASE_SERVICE_KEY=sb_secret_…
+   ```
+   and save. Render redeploys; the server log shows
+   `sarees and orders: postgres database; photos: supabase`, and the red
+   "not kept" banner in the admin panel disappears.
+
+The secret key can do anything in your project: keep it on the server only,
+never in the storefront or in git. The shop's tables live in a `shop` schema
+that Supabase's public API doesn't expose, with row level security on as well.
+
+A free Supabase project pauses after **a week without requests**. The GitHub
+Action in `.github/workflows/keep-alive.yml` visits `/api/health?deep=1` once a
+day, which wakes the API and touches the database and photo storage. (GitHub
+turns scheduled workflows off in repositories with no activity for 60 days; if
+that happens, re-enable it in the repository's **Actions** tab.)
+
 ## Guest checkout & email confirmation
 - No sign-up. At checkout the customer enters name, email, phone, and shipping
   address, then pays online (UPI / card / netbanking via HDFC SmartGateway).
-- After the order is placed, a confirmation email with the order summary is sent
-  to the customer's email address (see SMTP setup below).
+- The saved cart is checked against the live catalog whenever the cart or
+  checkout opens: sarees that were removed or sold out are taken out with a note,
+  and prices are refreshed.
+- After payment, a confirmation email with the order summary is sent to the
+  customer's email address (see SMTP setup below).
 - Orders appear in the admin **Orders** tab with full customer details.
 
 ## Sending real confirmation emails (SMTP)
@@ -105,61 +155,87 @@ Stock only comes down on **paid** orders — an abandoned payment leaves it alon
 
 ## Accepting real payments (HDFC SmartGateway)
 1. Get your credentials from the SmartGateway dashboard: the **API key**, your
-   **merchant id**, and the **payment_page_client_id**.
+   **merchant id**, the **payment_page_client_id** and the **Response Key**.
 2. In the `server/` folder, copy `.env.example` to `.env` and fill in:
    ```
    HDFC_API_KEY=your-raw-api-key      # Base64 is applied for you
    HDFC_MERCHANT_ID=your-merchant-id
    HDFC_CLIENT_ID=hdfcmaster          # "hdfcmaster" for sandbox
    HDFC_ENV=sandbox                   # or "production" when live
+   HDFC_RESPONSE_KEY=your-response-key
    PUBLIC_SERVER_URL=http://localhost:5050
    CLIENT_URL=http://localhost:5173
    ```
 3. Restart with `npm run dev`. Checkout now redirects to HDFC's hosted payment
    page instead of the demo modal.
 
+In production, `PUBLIC_SERVER_URL` must be the API's public **https** address
+(`https://api.shophaveliwale.com`) and `CLIENT_URL` the storefront
+(`https://www.shophaveliwale.com`). Orders taken while `HDFC_ENV=sandbox` are
+marked **TEST** everywhere (admin, receipt, email) and must not be shipped.
+
 ### How the flow works
-1. `POST /api/payments/hdfc/session` — the browser sends only *which* product and
-   *how many*. The server looks each one up in the catalog and rebuilds the cart
-   with its own prices, records a **Pending** order, and asks SmartGateway for a
-   hosted payment-page link. A tampered price in the request is ignored.
-2. The shopper is redirected there and pays.
-3. HDFC sends them back to `PUBLIC_SERVER_URL + /api/payments/hdfc/return`. The
-   server then makes its own **server-to-server** call to
-   `GET /orders/{order_id}` and only marks the order paid when the status is
-   `CHARGED` **and** the amount matches. A browser cannot fake a paid order.
-4. The shopper is redirected to `CLIENT_URL/checkout?status=success|failed`.
+1. `POST /api/payments/hdfc/session` — the browser sends only *which* sarees and
+   *how many*. The server rebuilds the cart from the database with its own
+   prices, gives the order a unique number, records it as **Pending**, and asks
+   SmartGateway for a payment page. The shopper is sent there only if it's on
+   SmartGateway's own domain.
+2. The shopper pays on HDFC's page.
+3. HDFC sends them back to
+   `PUBLIC_SERVER_URL/api/payments/hdfc/return/<code>`, where the code belongs to
+   that one order. The server checks the code and the return's signature, logs
+   both, then asks HDFC itself (`GET /orders/{order_id}`) — the dual inquiry.
+   The order is marked paid only if HDFC says `CHARGED` for that order **and**
+   amount; a mismatch is held for review. Nothing the browser brings back can
+   mark an order paid.
+4. The shopper lands on the receipt page (`/checkout?status=…&order=…&t=…`),
+   which shows the order number, amount and result from the database, and keeps
+   checking with HDFC while the bank is still confirming.
 
 ### Checking which mode you're in
 `GET /api/payments/config` returns `{"configured": true}` when real keys are
 loaded. The checkout page shows the same thing as a badge: **"Secured by HDFC
-SmartGateway"** vs **"Demo mode"**.
+SmartGateway"** vs **"Demo mode"**. The admin **Check payment gateway** panel
+tests the keys against both HDFC environments without charging anything.
 
-- Without keys, online checkout still works in **demo mode** (marked "Demo mode",
-  no real charge) so you can test the full flow. Once keys *are* set, the demo
-  order endpoint refuses to record orders directly — payment must go through the
-  gateway.
-- `PUBLIC_SERVER_URL` must be the API's public **https** origin in production;
-  HDFC redirects the shopper there, so `localhost` will not work once deployed.
+## Security, and HDFC's audit checklist
+| HDFC checkpoint | How the shop meets it |
+|---|---|
+| Unique order ID | `PE` + date + 8 characters from the OS's secure random generator; the database refuses any repeat. |
+| Request tampering | Amounts always come from the database; the browser only sends product ids and quantities. |
+| Response tampering | The return URL carries a code tied to its order; the return's HMAC signature is checked with the Response Key; the result is decided by the server-to-server Order Status call, whose order id and amount must match. Anything suspicious is logged. |
+| URL redirection | Shoppers are only sent to payment pages on SmartGateway's own https domain (checked on the server and in the browser), and always come back to `CLIENT_URL`. |
+| Duplicate entries | Order numbers and checkout submissions are unique; a payment is completed exactly once, so stock and the email happen once even if confirmations arrive together. |
+| Receipt | The result page shows order number, amount, transaction id, date and a clear success/failure message; it can be printed, and an email receipt is sent. |
+| SSL | HTTPS on the storefront (Vercel) and the API (Render), with HSTS. |
+
+Also: every payment step is stored in the database (orders and
+`shop.payment_events`), and the confirmation shown to the customer comes from
+that database status. Receipts are only readable with the code from checkout, so
+order numbers can't be used to look up other people's orders. The API only
+accepts browser calls from the storefront, sends standard security headers,
+escapes customer input in emails, and never writes the admin password to its log.
+
+To share an **Order Status API response** with HDFC: admin → **Orders** → open
+the order → **Check status with HDFC**. The reply is shown in full, ready to copy.
+
+## Running the tests
+```bash
+npm --prefix server test
+```
+Includes an end-to-end run of HDFC's audit checklist against a fake
+SmartGateway: tampered prices, forged and relabelled returns, simultaneous
+confirmations, double submissions, and redirects to other sites.
 
 ## Brand logo
 - The logo at `client/public/logo.jpeg` is used in the navbar and as the favicon.
   To change it, replace that file (keep the name `logo.jpeg`).
 
 ## Notes
-- Product data lives in `server/data/products.json`; uploaded images in
-  `server/uploads/`. Both are created automatically and are git-ignored.
-- Orders are stored in a SQLite database at `server/data/haveli.db` (git-ignored).
-  Any old `server/data/orders.json` is auto-imported into the database on first
-  start, then renamed to `orders.json.bak`.
-- For production, build the client (`npm --prefix client run build`) and serve it,
-  and replace the simple token auth with real auth over HTTPS.
 - The storefront finds the API through the **`VITE_API_BASE`** build-time
   variable (see `client/.env.production.example`). It is baked into the bundle at
   build time, so it must be set in the hosting provider's environment *before*
   the build runs — if it is missing, the deployed site silently shows an empty
   catalog. Leave it unset for local dev, where Vite proxies to the server.
-- On a host with ephemeral storage, set **`DATA_DIR`** to a mounted persistent
-  disk (Render: `/var/data`). `products.json`, the SQLite database, and uploaded
-  images all live there — without it, your catalog and orders are wiped on every
-  deploy and the sample sarees are re-seeded.
+- The API accepts browser requests only from `CLIENT_URL` (and its www/bare-domain
+  twin). Add any other storefront address to `ALLOWED_ORIGINS`.

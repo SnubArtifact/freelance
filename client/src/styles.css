@@ -843,3 +843,38 @@ main { flex: 1; }
 /* Admin: warning when the server has no permanent storage */
 .storage-warning { width: min(1100px, calc(100% - 3rem)); margin: 1.2rem auto 0; padding: 0.95rem 1.2rem; border-radius: 12px; background: rgba(179, 64, 31, 0.12); border: 1px solid rgba(179, 64, 31, 0.35); color: var(--err); font-size: 0.9rem; line-height: 1.55; }
 .storage-warning code { background: rgba(179, 64, 31, 0.12); padding: 0.05rem 0.35rem; border-radius: 5px; font-size: 0.85em; }
+
+/* Payment result / receipt */
+.receipt { max-width: 620px; margin: 1rem auto 3rem; background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); padding: 2.4rem 2.2rem; text-align: center; box-shadow: var(--shadow); }
+.receipt h1 { font-size: 2.1rem; margin: 0.6rem 0 0.4rem; }
+.receipt-lead { color: var(--muted); margin: 0 auto 1.6rem; max-width: 460px; line-height: 1.6; }
+.receipt-mark { width: 64px; height: 64px; margin: 0 auto; border-radius: 50%; display: grid; place-items: center; font-size: 1.9rem; color: #fff; background: var(--ok); }
+.receipt-pending .receipt-mark { background: var(--cream-2); }
+.receipt-failed .receipt-mark { background: var(--err); }
+.receipt-test { margin: 0 0 1.2rem; padding: 0.55rem 0.9rem; border-radius: 10px; background: rgba(179, 64, 31, 0.1); color: var(--err); font-weight: 600; font-size: 0.85rem; }
+.receipt-facts { display: grid; grid-template-columns: max-content 1fr; gap: 0.55rem 1.4rem; text-align: left; margin: 0 0 1.4rem; padding: 1.1rem 1.3rem; border-radius: 12px; background: var(--cream); }
+.receipt-facts dt { color: var(--muted); }
+.receipt-facts dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.receipt-items { width: 100%; border-collapse: collapse; text-align: left; margin-bottom: 1.6rem; font-size: 0.95rem; }
+.receipt-items td { padding: 0.45rem 0; border-bottom: 1px solid var(--line); }
+.receipt-items td:last-child { text-align: right; }
+.receipt-total td { font-weight: 700; color: var(--wine); border-bottom: none; }
+.receipt-actions { display: flex; gap: 0.8rem; justify-content: center; flex-wrap: wrap; }
+
+@media print {
+  .nav, .footer, .receipt-actions { display: none !important; }
+  body, .receipt-facts { background: #fff !important; }
+  .receipt { box-shadow: none; border: 1px solid #999; margin: 0 auto; }
+  .receipt-mark { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}
+
+/* Admin: test orders and the payment log */
+.test-tag { margin-left: 0.4rem; background: rgba(179, 64, 31, 0.14); color: var(--err); }
+.ode-log { grid-column: 1 / -1; }
+.pay-log { list-style: none; margin: 0 0 1rem; padding: 0; font-size: 0.85rem; }
+.pay-log li { display: grid; grid-template-columns: 9.5rem 14rem 1fr; gap: 0.2rem 0.9rem; padding: 0.4rem 0; border-bottom: 1px dashed var(--line); }
+.pay-log li.warn { color: var(--err); font-weight: 600; }
+.pay-log-when { color: var(--muted); }
+.pay-log-detail { overflow-wrap: anywhere; }
+.pay-reply { max-height: 320px; overflow: auto; background: var(--cream); border: 1px solid var(--line); border-radius: 10px; padding: 0.9rem; font-size: 0.78rem; white-space: pre-wrap; }
+@media (max-width: 720px) { .pay-log li { grid-template-columns: 1fr; } }

@@ -111,12 +111,36 @@ export default function AdminDashboard() {
     }
   }
 
+  // Photos are shrunk in the browser before upload (longest side 1600px,
+  // JPEG): pages load faster and they use less of the free photo storage.
+  // Anything the browser can't read is uploaded as it is.
+  async function shrink(file) {
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return file;
+    try {
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+      if (scale === 1 && file.size < 600 * 1024) return file;
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff"; // transparent PNG areas become white, not black
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+      if (!blob || blob.size >= file.size) return file;
+      return new File([blob], `${file.name.replace(/\.\w+$/, "")}.jpg`, { type: "image/jpeg" });
+    } catch {
+      return file;
+    }
+  }
+
   async function handleFiles(e) {
     const files = e.target.files;
     if (!files?.length) return;
     setUploading(true);
     try {
-      const { urls } = await api.uploadImages(files);
+      const { urls } = await api.uploadImages(await Promise.all([...files].map(shrink)));
       update("images", [...form.images, ...urls]);
       notify("Image uploaded");
     } catch (err) {
@@ -215,11 +239,23 @@ export default function AdminDashboard() {
 
       {storage?.persistent === false && (
         <div className="storage-warning" role="alert">
-          <strong>Changes you make here will not be kept.</strong> This server has
-          no permanent storage, so sarees, photos, stock and orders are erased
-          whenever it restarts or wakes from sleep. In Render, add a disk at{" "}
-          <code>/var/data</code> and set <code>DATA_DIR=/var/data</code>. This
-          warning goes away once that is done.
+          {storage.dataKept === false ? (
+            <>
+              <strong>Changes you make here will not be kept.</strong> Sarees,
+              stock, orders and photos are stored on this server, which erases
+              them whenever it restarts or wakes from sleep. In Render, set{" "}
+              <code>MONGODB_URI</code> and <code>CLOUDINARY_URL</code> (see the
+              README).
+            </>
+          ) : (
+            <>
+              <strong>Photos you upload will not be kept.</strong> Sarees, stock
+              and orders are saved, but photos are stored on this server, which
+              erases them whenever it restarts or wakes from sleep. In Render,
+              set <code>CLOUDINARY_URL</code>.
+            </>
+          )}{" "}
+          This warning goes away once that is done.
         </div>
       )}
 

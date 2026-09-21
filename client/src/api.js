@@ -127,20 +127,52 @@ export const api = {
     );
   },
 
-  // Create a SmartGateway payment session. Returns { configured, paymentLink }
-  // when the gateway is live, or { configured: false } to fall back to demo.
-  async createHdfcSession(items, customer) {
+  // Create a SmartGateway payment session. Returns { configured, paymentLink,
+  // orderNo, token } when the gateway is live, or { configured: false } to
+  // fall back to demo. Only ids and quantities are sent: prices always come
+  // from the server. attemptId identifies this one submission, so a repeated
+  // request can't create a second order.
+  async createHdfcSession(items, customer, attemptId) {
     return handle(
       await fetch(apiUrl("/api/payments/hdfc/session"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items, customer }),
+        body: JSON.stringify({
+          items: items.map(({ id, qty, name }) => ({ id, qty, name })),
+          customer,
+          attemptId,
+        }),
       })
     );
   },
 
-  async getOrder(orderNo) {
-    return handle(await fetch(apiUrl(`/api/orders/${orderNo}`)));
+  // The receipt for an order; `token` is the receipt code from checkout.
+  async getOrder(orderNo, token) {
+    return handle(
+      await fetch(
+        apiUrl(`/api/orders/${encodeURIComponent(orderNo)}?t=${encodeURIComponent(token)}`)
+      )
+    );
+  },
+
+  // Admin-only: every recorded payment step for an order.
+  async adminOrderEvents(orderNo) {
+    return handleAuthed(
+      await fetch(apiUrl(`/api/admin/orders/${encodeURIComponent(orderNo)}/events`), {
+        headers: authHeaders(),
+      })
+    );
+  },
+
+  // Admin-only: asks HDFC for the order's status now. Returns
+  // { order, response } with HDFC's full Order Status reply.
+  async adminCheckOrder(orderNo) {
+    return handleAuthed(
+      await fetch(apiUrl(`/api/admin/orders/${encodeURIComponent(orderNo)}/check`), {
+        method: "POST",
+        headers: authHeaders(),
+      })
+    );
   },
 
   // Admin-only: why is the payment gateway refusing? Makes no payment.

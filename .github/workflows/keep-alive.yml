@@ -1,0 +1,19 @@
+name: Keep the shop awake
+
+# Supabase pauses a free project after a week without requests, and Render's
+# free server sleeps when idle. Once a day this wakes the API and touches the
+# database and photo storage, so neither can go to sleep for good.
+on:
+  schedule:
+    - cron: "17 3 * * *" # every day at 03:17 UTC (08:47 IST)
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake the API and check the database and photos
+        run: |
+          curl --fail --silent --show-error --max-time 120 \
+            --retry 3 --retry-delay 30 --retry-all-errors \
+            "https://api.shophaveliwale.com/api/health?deep=1"

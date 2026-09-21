@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useCart, useCartCheck } from "../context/CartContext.jsx";
 import { api, formatPrice } from "../api.js";
 import { apiUrl } from "../config.js";
+import { isGatewayUrl, newAttemptId } from "../gateway.js";
+import Receipt from "../components/Receipt.jsx";
 
 /* ─── Demo Payment Modal ───────────────────────────────────────────────────── */
 function DemoPaymentModal({ amount, onSuccess, onCancel }) {
@@ -153,11 +155,15 @@ function DemoPaymentModal({ amount, onSuccess, onCancel }) {
   );
 }
 
+// While the bank is still confirming, the receipt re-checks every few seconds
+// for up to three minutes.
+const POLL_MS = 4000;
+const POLL_LIMIT = 45;
+
 /* ─── Checkout Page ────────────────────────────────────────────────────────── */
 export default function Checkout() {
   const { items, subtotal, clearCart } = useCart();
-  const navigate = useNavigate();
-  const [placedOrder, setPlacedOrder] = useState(null);
+  const [receipt, setReceipt] = useState(null); // the result page, once there is one
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [payLive, setPayLive] = useState(false);
@@ -173,6 +179,11 @@ export default function Checkout() {
   });
 
   const [params, setParams] = useSearchParams();
+  // Guards against a second click sending a second payment request before the
+  // button has had a chance to disable itself.
+  const inFlight = useRef(false);
+  const pollTimer = useRef(null);
+  const polls = useRef(0);
 
   // Drops sarees that were deleted or sold out since they were added, so a
   // stale cart can't stop the payment page from opening.
@@ -186,26 +197,52 @@ export default function Checkout() {
       .catch(() => setPayLive(false));
   }, []);
 
-  // Handle the redirect back from the gateway (?status=success|failed&order=…).
+  // Coming back to this page with the browser's back button after leaving for
+  // the payment page: let the shopper use the form again.
+  useEffect(() => {
+    const reset = (e) => {
+      if (e.persisted) {
+        inFlight.current = false;
+        setSubmitting(false);
+      }
+    };
+    window.addEventListener("pageshow", reset);
+    return () => {
+      window.removeEventListener("pageshow", reset);
+      clearTimeout(pollTimer.current);
+    };
+  }, []);
+
+  // The result shown is always the server's, which has asked HDFC directly —
+  // never the status in the address bar.
+  async function loadReceipt(orderNo, token) {
+    try {
+      const order = await api.getOrder(orderNo, token);
+      setReceipt(order);
+      if (order.outcome === "paid") clearCart();
+      if (order.outcome === "pending" && (polls.current += 1) < POLL_LIMIT) {
+        pollTimer.current = setTimeout(() => loadReceipt(orderNo, token), POLL_MS);
+      }
+    } catch {
+      setError("We couldn't load your order. If you paid, please contact us with your payment details.");
+    }
+  }
+
+  // Back from the gateway: /checkout?status=…&order=…&t=…
   useEffect(() => {
     const status = params.get("status");
     const orderNo = params.get("order");
+    const token = params.get("t");
     if (!status) return;
     // Clear the query so a refresh doesn't re-trigger this.
     setParams({}, { replace: true });
-    if (status === "success" && orderNo) {
-      api
-        .getOrder(orderNo)
-        .then((order) => {
-          setPlacedOrder(order);
-          clearCart();
-          window.scrollTo({ top: 0, behavior: "smooth" });
-        })
-        .catch(() =>
-          setError("We couldn't load your order. Please contact us with your payment details.")
-        );
+    if (orderNo && token) {
+      window.scrollTo({ top: 0 });
+      loadReceipt(orderNo, token);
     } else if (status === "failed") {
-      setError("Your payment didn't go through. No amount was charged — please try again.");
+      setError("Your payment didn't go through. Please try again.");
+    } else {
+      setError("We couldn't show your receipt here. If you paid, a confirmation email is on its way.");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -228,23 +265,30 @@ export default function Checkout() {
 
   async function placeOrder(e) {
     e.preventDefault();
+    if (inFlight.current) return;
+    inFlight.current = true;
     setError("");
     setSubmitting(true);
     try {
       // Create a SmartGateway session on the server.
-      const data = await api.createHdfcSession(items, customerDetails());
+      const data = await api.createHdfcSession(items, customerDetails(), newAttemptId());
 
       // No keys configured → show the demo payment modal instead.
       if (!data.configured) {
         setDemoModal({ amount: Math.round(total * 100) });
         setSubmitting(false);
+        inFlight.current = false;
         return;
       }
 
-      // Real gateway configured — redirect to HDFC's hosted payment page.
-      if (!data.paymentLink) throw new Error("Could not start the payment");
-      window.location.href = data.paymentLink;
+      // Real gateway configured — go to HDFC's hosted payment page, and
+      // nowhere else.
+      if (!data.paymentLink || !isGatewayUrl(data.paymentLink)) {
+        throw new Error("We couldn't start the payment. Please try again.");
+      }
+      window.location.assign(data.paymentLink);
     } catch (err) {
+      inFlight.current = false;
       setError(err.message || "Could not place order");
       setSubmitting(false);
       // If the server turned an item down, refresh the cart. When that removes
@@ -263,7 +307,7 @@ export default function Checkout() {
         items,
         customer: customerDetails(),
       });
-      setPlacedOrder(order);
+      setReceipt(order);
       clearCart();
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
@@ -273,29 +317,15 @@ export default function Checkout() {
     }
   }
 
-  // Order placed successfully
-  if (placedOrder) {
+  if (receipt) {
     return (
-      <div className="page">
-        <div className="empty-state success">
-          <div className="success-mark">✓</div>
-          <h1>Order placed!</h1>
-          <p>
-            Thank you, {placedOrder.customer.name || "friend"}. Your order
-            <strong> #{placedOrder.orderNo} </strong> is confirmed.
-          </p>
-          <p className="muted">
-            {placedOrder.emailSent
-              ? `A confirmation email is on its way to ${placedOrder.customer.email}.`
-              : `We'll send your confirmation to ${placedOrder.customer.email}.`}
-          </p>
-          <div className="checkout-cta">
-            <button className="btn btn-primary" onClick={() => navigate("/collection")}>
-              Continue Shopping
-            </button>
-          </div>
-        </div>
-      </div>
+      <Receipt
+        order={receipt}
+        onRetry={() => {
+          setReceipt(null);
+          setError("");
+        }}
+      />
     );
   }
 
@@ -304,7 +334,7 @@ export default function Checkout() {
       <div className="page">
         <div className="empty-state">
           <h1>Nothing to check out</h1>
-          <p>{cartNotice || "Your cart is empty."}</p>
+          <p>{error || cartNotice || "Your cart is empty."}</p>
           <Link to="/collection" className="btn btn-primary">Browse Collection</Link>
         </div>
       </div>

@@ -2,18 +2,41 @@ services:
   - type: web
     name: saree-server
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm --prefix server install
     startCommand: node server/index.js
-    healthCheckPath: /api/products
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
         value: 20
       - key: PORT
         value: 10000
-      - key: DATA_DIR
-        value: /var/data
       - key: ADMIN_PASSWORD
+        sync: false
+      # The free plan erases its disk on every restart, deploy and wake-up, so
+      # sarees, orders and the payment log live in Supabase Postgres and photos
+      # in Supabase Storage (free plan). See the README.
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: HDFC_API_KEY
+        sync: false
+      - key: HDFC_MERCHANT_ID
+        sync: false
+      - key: HDFC_CLIENT_ID
+        sync: false
+      - key: HDFC_ENV
+        sync: false
+      - key: HDFC_RESELLER_ID
+        value: hdfc_reseller
+      - key: HDFC_RESPONSE_KEY
+        sync: false
+      - key: PUBLIC_SERVER_URL
+        sync: false
+      - key: CLIENT_URL
         sync: false
       - key: SMTP_HOST
         sync: false
@@ -25,21 +48,3 @@ services:
         sync: false
       - key: SHOP_EMAIL
         sync: false
-      - key: HDFC_API_KEY
-        sync: false
-      - key: HDFC_MERCHANT_ID
-        sync: false
-      - key: HDFC_CLIENT_ID
-        sync: false
-      - key: HDFC_ENV
-        value: production
-      - key: HDFC_RESELLER_ID
-        value: hdfc_reseller
-      - key: PUBLIC_SERVER_URL
-        sync: false
-      - key: CLIENT_URL
-        sync: false
-    disk:
-      name: saree-data
-      mountPath: /var/data
-      sizeGB: 1

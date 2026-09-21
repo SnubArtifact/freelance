@@ -6,13 +6,19 @@
   "main": "index.js",
   "scripts": {
     "start": "node --env-file-if-exists=.env index.js",
-    "dev": "node --watch --env-file-if-exists=.env index.js"
+    "dev": "node --watch --env-file-if-exists=.env index.js",
+    "test": "node --test --test-concurrency=1 --test-reporter=spec",
+    "check:supabase": "node --env-file-if-exists=.env supabase-check.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
+    "@electric-sql/pglite": "^0.5.8",
     "cors": "^2.8.5",
     "express": "^4.21.2",
     "multer": "^1.4.5-lts.1",
-    "nodemailer": "^6.9.16"
+    "nodemailer": "^6.9.16",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite-socket": "^0.2.11"
   }
 }
