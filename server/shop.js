@@ -40,6 +40,7 @@ function toOrder(row) {
     status: row.status,
     isTest: row.is_test,
     paymentLink: row.payment_link,
+    gatewayRef: row.gateway_ref,
     gatewayStatus: row.gateway_status,
     gatewayResponse: row.gateway_response,
     paidAt: num(row.paid_at),
@@ -203,6 +204,14 @@ export async function openShop(db, { seed = true, legacyDir = null } = {}) {
         [orderNo, link],
         toOrder
       ),
+    setGatewayRef: (orderNo, ref) =>
+      one(
+        "update shop.orders set gateway_ref = $2, updated_at = now() where order_no = $1 returning *",
+        [orderNo, ref],
+        toOrder
+      ),
+    findOrderByGatewayRef: (ref) =>
+      one("select * from shop.orders where gateway_ref = $1", [String(ref)], toOrder),
 
     // Records a gateway outcome that isn't a payment. Never touches an order
     // that is already paid, so a late or replayed failure can't undo it.

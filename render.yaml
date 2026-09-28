@@ -22,6 +22,14 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      # Razorpay takes payments whenever these are set; HDFC's settings below
+      # are the fallback.
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
       - key: HDFC_API_KEY
         sync: false
       - key: HDFC_MERCHANT_ID

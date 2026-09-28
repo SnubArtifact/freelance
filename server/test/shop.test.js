@@ -52,6 +52,7 @@ const order = (fields = {}) => ({
 const stored = (o) => ({
   ...o,
   paymentLink: null,
+  gatewayRef: null,
   gatewayStatus: null,
   gatewayResponse: null,
   paidAt: null,

@@ -12,9 +12,10 @@ checkout and receive an order confirmation by email (no account required).
   Postgres (PGlite) for local development, so there's nothing to install.
   Sarees, stock, orders and a log of every payment step are kept here.
 - **Photos:** Supabase Storage in production; a local folder in development.
-- **Payments:** HDFC SmartGateway (UPI / cards / netbanking) via its hosted
-  payment page, with a server-to-server order-status check before any order is
-  marked paid; falls back to demo mode when keys aren't set
+- **Payments:** Razorpay or HDFC SmartGateway (UPI / cards / netbanking).
+  Whichever gateway is configured, no order is marked paid until the server has
+  confirmed it with the gateway itself; falls back to demo mode when no keys
+  are set.
 
 ## Admin panel — two tabs
 - **Catalog:** add / edit / delete sarees (with image upload) — changes appear on
@@ -153,6 +154,54 @@ that happens, re-enable it in the repository's **Actions** tab.)
 - Without SMTP set, email runs in **demo mode** — the confirmation is logged to
   the server console instead of sent, so you can still test the flow.
 
+## Which gateway takes the money
+Whichever one is configured, checked in this order:
+
+1. **Razorpay** — when `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` are set.
+2. **HDFC SmartGateway** — when its keys are set instead.
+3. **Demo mode** — neither: a fake payment screen, so the flow can be tried
+   without money.
+
+`PAYMENT_PROVIDER=razorpay|hdfc|demo` forces one. `GET /api/payments/config`
+reports which is live, and the checkout page shows it as a badge. Each order
+records the gateway that took it, so orders taken through an older gateway are
+still checked against that gateway afterwards.
+
+## Accepting real payments (Razorpay)
+1. Razorpay dashboard → **Account & Settings → API Keys** → generate keys.
+   Test keys start with `rzp_test_`; orders paid with them are marked **TEST**
+   everywhere so they're never shipped.
+2. Set on the server (Render → Environment, or `server/.env` locally):
+   ```
+   RAZORPAY_KEY_ID=rzp_test_xxxxxxxx
+   RAZORPAY_KEY_SECRET=your-key-secret
+   RAZORPAY_WEBHOOK_SECRET=the-webhook-secret
+   ```
+3. Razorpay dashboard → **Settings → Webhooks** → add a webhook for
+   **payment.captured** and **payment.failed** pointing at
+   `https://api.shophaveliwale.com/api/payments/razorpay/webhook`, and put its
+   secret in `RAZORPAY_WEBHOOK_SECRET`.
+
+The key **secret** and the webhook secret stay on the server. Only the key id
+reaches the browser, which is what Razorpay expects.
+
+### How the flow works
+1. `POST /api/payments/razorpay/order` — the browser sends only *which* sarees
+   and *how many*. The server rebuilds the cart from the database, records a
+   pending order with a unique number, and asks Razorpay for an order for that
+   exact amount.
+2. Razorpay's own payment window opens on the shop's page.
+3. On success it hands back a payment id, order id and signature. The server
+   checks that signature with the key secret (HMAC-SHA256 of
+   `order_id|payment_id`) and **refuses anything that doesn't match**, then
+   reads the payment back from Razorpay: it must be *captured*, for this order,
+   for this exact amount. A payment the bank has only authorised is captured
+   first.
+4. The receipt page shows the result from the shop's own database.
+
+If the shopper closes the window, the shop asks Razorpay anyway — and the
+webhook confirms the payment even if the browser never reports back.
+
 ## Accepting real payments (HDFC SmartGateway)
 1. Get your credentials from the SmartGateway dashboard: the **API key**, your
    **merchant id**, the **payment_page_client_id** and the **Response Key**.
@@ -193,12 +242,16 @@ marked **TEST** everywhere (admin, receipt, email) and must not be shipped.
    checking with HDFC while the bank is still confirming.
 
 ### Checking which mode you're in
-`GET /api/payments/config` returns `{"configured": true}` when real keys are
-loaded. The checkout page shows the same thing as a badge: **"Secured by HDFC
-SmartGateway"** vs **"Demo mode"**. The admin **Check payment gateway** panel
-tests the keys against both HDFC environments without charging anything.
+`GET /api/payments/config` returns `{"configured": true, "provider": "…"}`
+when real keys are loaded. The checkout page shows it as a badge: **"Secured by
+Razorpay"**, **"Secured by HDFC SmartGateway"** or **"Demo mode"**. The admin
+**Check payment gateway** panel tests the live gateway's keys without charging
+anything.
 
 ## Security, and HDFC's audit checklist
+These protections apply to whichever gateway is in use; the wording below
+follows HDFC's checklist, since theirs is the formal audit.
+
 | HDFC checkpoint | How the shop meets it |
 |---|---|
 | Unique order ID | `PE` + date + 8 characters from the OS's secure random generator; the database refuses any repeat. |
@@ -223,9 +276,10 @@ the order → **Check status with HDFC**. The reply is shown in full, ready to c
 ```bash
 npm --prefix server test
 ```
-Includes an end-to-end run of HDFC's audit checklist against a fake
-SmartGateway: tampered prices, forged and relabelled returns, simultaneous
-confirmations, double submissions, and redirects to other sites.
+Includes end-to-end runs against a fake SmartGateway *and* a fake Razorpay:
+tampered prices, forged signatures, payments belonging to another order,
+wrong amounts, simultaneous confirmations, double submissions, redirects to
+other sites, and webhooks.
 
 ## Brand logo
 - The logo at `client/public/logo.jpeg` is used in the navbar and as the favicon.

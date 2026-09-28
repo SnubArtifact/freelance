@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useCart, useCartCheck } from "../context/CartContext.jsx";
 import { api, formatPrice } from "../api.js";
 import { apiUrl } from "../config.js";
-import { isGatewayUrl, newAttemptId } from "../gateway.js";
+import { isGatewayUrl, loadRazorpayCheckout, newAttemptId } from "../gateway.js";
 import Receipt from "../components/Receipt.jsx";
 
 /* ─── Demo Payment Modal ───────────────────────────────────────────────────── */
@@ -167,6 +167,7 @@ export default function Checkout() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [payLive, setPayLive] = useState(false);
+  const [provider, setProvider] = useState("demo");
   const [demoModal, setDemoModal] = useState(null); // { amount } when open
   const [form, setForm] = useState({
     name: "",
@@ -182,6 +183,8 @@ export default function Checkout() {
   // Guards against a second click sending a second payment request before the
   // button has had a chance to disable itself.
   const inFlight = useRef(false);
+  // Once a payment has an answer, a closing window mustn't overwrite it.
+  const settled = useRef(false);
   const pollTimer = useRef(null);
   const polls = useRef(0);
 
@@ -189,11 +192,14 @@ export default function Checkout() {
   // stale cart can't stop the payment page from opening.
   const { notice: cartNotice, check: checkCart } = useCartCheck();
 
-  // Is the real HDFC SmartGateway configured on the server?
+  // Which gateway takes payments, if any?
   useEffect(() => {
     fetch(apiUrl("/api/payments/config"))
       .then((r) => r.json())
-      .then((d) => setPayLive(Boolean(d.configured)))
+      .then((d) => {
+        setPayLive(Boolean(d.configured));
+        setProvider(d.provider || "demo");
+      })
       .catch(() => setPayLive(false));
   }, []);
 
@@ -263,15 +269,78 @@ export default function Checkout() {
     pincode: form.pincode,
   });
 
+  // Razorpay opens its own window on this page. Nothing it hands back is
+  // believed until the server has checked it with Razorpay.
+  async function payWithRazorpay(session) {
+    const Razorpay = await loadRazorpayCheckout();
+    const done = (result) => {
+      settled.current = true;
+      setReceipt(result);
+      if (result.outcome === "paid") clearCart();
+      setSubmitting(false);
+      inFlight.current = false;
+      window.scrollTo({ top: 0 });
+    };
+    const stop = (message) => {
+      setError(message);
+      setSubmitting(false);
+      inFlight.current = false;
+    };
+    const close = async (reason) => {
+      if (settled.current) return;
+      try {
+        done(await api.razorpayCancel({ orderNo: session.orderNo, token: session.token, reason }));
+      } catch (err) {
+        stop(err.message || "The payment was not completed.");
+      }
+    };
+
+    const checkout = new Razorpay({
+      key: session.keyId,
+      order_id: session.razorpayOrderId,
+      amount: session.amount,
+      currency: session.currency,
+      name: session.name,
+      description: `Order ${session.orderNo}`,
+      prefill: session.prefill,
+      notes: { order_no: session.orderNo },
+      theme: { color: "#6d1f3a" },
+      handler: async (response) => {
+        try {
+          done(
+            await api.razorpayVerify({
+              orderNo: session.orderNo,
+              token: session.token,
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            })
+          );
+        } catch (err) {
+          stop(err.message || "We couldn't confirm that payment. Please contact us before paying again.");
+        }
+      },
+      modal: { ondismiss: () => close("the payment window was closed") },
+    });
+    checkout.on("payment.failed", (response) =>
+      close(response?.error?.description || "the payment failed")
+    );
+    checkout.open();
+  }
+
   async function placeOrder(e) {
     e.preventDefault();
     if (inFlight.current) return;
     inFlight.current = true;
+    settled.current = false;
     setError("");
     setSubmitting(true);
     try {
-      // Create a SmartGateway session on the server.
-      const data = await api.createHdfcSession(items, customerDetails(), newAttemptId());
+      const attemptId = newAttemptId();
+      const data =
+        provider === "razorpay"
+          ? await api.razorpayOrder(items, customerDetails(), attemptId)
+          : await api.createHdfcSession(items, customerDetails(), attemptId);
 
       // No keys configured → show the demo payment modal instead.
       if (!data.configured) {
@@ -281,8 +350,12 @@ export default function Checkout() {
         return;
       }
 
-      // Real gateway configured — go to HDFC's hosted payment page, and
-      // nowhere else.
+      if (data.provider === "razorpay") {
+        await payWithRazorpay(data);
+        return;
+      }
+
+      // HDFC: go to its hosted payment page, and nowhere else.
       if (!data.paymentLink || !isGatewayUrl(data.paymentLink)) {
         throw new Error("We couldn't start the payment. Please try again.");
       }
@@ -404,7 +477,11 @@ export default function Checkout() {
                 <span className="pay-label">
                   Online Payment (UPI, Card, Netbanking)
                   <span className="pay-badge">
-                    {payLive ? "Secured by HDFC SmartGateway" : "Demo mode"}
+                    {!payLive
+                      ? "Demo mode"
+                      : provider === "razorpay"
+                        ? "Secured by Razorpay"
+                        : "Secured by HDFC SmartGateway"}
                   </span>
                 </span>
               </div>
@@ -439,9 +516,11 @@ export default function Checkout() {
                 : `Pay ${formatPrice(total)}`}
             </button>
             <p className="sum-note center">
-              {payLive
-                ? "You'll be redirected to HDFC's secure payment page."
-                : "A demo payment screen will open to simulate the flow."}
+              {!payLive
+                ? "A demo payment screen will open to simulate the flow."
+                : provider === "razorpay"
+                  ? "A secure Razorpay window will open to take the payment."
+                  : "You'll be redirected to HDFC's secure payment page."}
             </p>
           </aside>
         </form>

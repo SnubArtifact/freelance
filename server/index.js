@@ -17,6 +17,8 @@ import {
   verifyReturnSignature,
 } from "./hdfc.js";
 import { openImageStore } from "./images.js";
+import { razorpayClient } from "./razorpay.js";
+import { razorpayPayments } from "./razorpayRoutes.js";
 import {
   allowedOrigins,
   escapeHtml,
@@ -73,9 +75,19 @@ const HDFC_BASE_URL =
   (HDFC_ENV === "sandbox"
     ? "https://smartgateway.hdfcuat.bank.in"
     : "https://smartgateway.hdfc.bank.in");
-// Orders taken while connected to the sandbox are marked as tests: the bank's
-// auditors place them with test cards, and they must not be shipped.
-const TEST_ORDERS = HDFC_ENV === "sandbox";
+// ---- Razorpay ---------------------------------------------------------------
+// RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET come from the Razorpay dashboard (test
+// keys start with rzp_test_). RAZORPAY_WEBHOOK_SECRET is the secret of the
+// webhook added there, pointing at
+// PUBLIC_SERVER_URL/api/payments/razorpay/webhook.
+const RAZORPAY_KEY_ID = (process.env.RAZORPAY_KEY_ID || "").trim();
+const RAZORPAY_KEY_SECRET = (process.env.RAZORPAY_KEY_SECRET || "").trim();
+const RAZORPAY_WEBHOOK_SECRET = (process.env.RAZORPAY_WEBHOOK_SECRET || "").trim();
+
+// Test orders are marked as such everywhere so they are never shipped: HDFC's
+// auditors place them with test cards, and Razorpay's test keys take no real
+// money.
+const TEST_ORDERS = HDFC_ENV === "sandbox" || RAZORPAY_KEY_ID.startsWith("rzp_test");
 
 const PUBLIC_SERVER_URL = (
   process.env.PUBLIC_SERVER_URL || `http://localhost:${PORT}`
@@ -93,6 +105,23 @@ const gateway = hdfcClient({
   baseUrl: HDFC_BASE_URL,
   shopName: SHOP_NAME,
 });
+
+const razorpay =
+  RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET
+    ? razorpayClient({
+        keyId: RAZORPAY_KEY_ID,
+        keySecret: RAZORPAY_KEY_SECRET,
+        apiBase: process.env.RAZORPAY_API_BASE,
+      })
+    : null;
+
+// Which gateway takes the money: Razorpay when its keys are set, otherwise HDFC
+// SmartGateway, otherwise the demo screen. PAYMENT_PROVIDER overrides it.
+const PROVIDER =
+  (process.env.PAYMENT_PROVIDER || "").trim().toLowerCase() ||
+  (razorpay ? "razorpay" : hdfcConfigured() ? "hdfc" : "demo");
+const paymentsLive = () =>
+  PROVIDER === "razorpay" ? Boolean(razorpay) : PROVIDER === "hdfc" ? hdfcConfigured() : false;
 
 // Most recent session failure, shown in the admin panel's payment check.
 let lastHdfcError = null;
@@ -157,6 +186,9 @@ const STORAGE = {
 };
 STORAGE.persistent = STORAGE.dataKept && STORAGE.photosKept;
 console.log(`[storage] sarees and orders: ${shop.kind} database; photos: ${images.kind}`);
+console.log(
+  `[payments] gateway: ${PROVIDER}${TEST_ORDERS ? " (test mode — orders are marked TEST)" : ""}`
+);
 if (!STORAGE.persistent) {
   const lost = [
     !STORAGE.dataKept && "sarees, stock and orders (set DATABASE_URL)",
@@ -263,7 +295,16 @@ app.set("trust proxy", 1);
 app.use(securityHeaders);
 const origins = allowedOrigins(CLIENT_URL, process.env.ALLOWED_ORIGINS);
 app.use(cors({ origin: (origin, done) => done(null, !origin || origins.has(origin)) }));
-app.use(express.json({ limit: "2mb" }));
+// The raw body is kept so Razorpay's webhook signature can be checked against
+// exactly the bytes that arrived.
+app.use(
+  express.json({
+    limit: "2mb",
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ extended: false }));
 app.use("/uploads", express.static(UPLOAD_DIR));
 
@@ -382,12 +423,21 @@ app.get("/api/admin/session", requireAuth, (_req, res) => {
 
 // ----- Payments (HDFC SmartGateway) ---------------------------------------
 app.get("/api/payments/config", (_req, res) => {
-  res.json({ configured: hdfcConfigured() });
+  res.json({ configured: paymentsLive(), provider: PROVIDER });
 });
 
 // Admin-only: explains in plain words why the gateway is refusing payments,
 // without exposing the API key. Makes no payment and creates no order.
 app.get("/api/admin/payments/diagnose", requireAuth, wrap(async (_req, res) => {
+  if (PROVIDER === "razorpay" && razorpayRoutes) {
+    return res.json({
+      ...(await razorpayRoutes.diagnose()),
+      publicServerUrl: PUBLIC_SERVER_URL,
+      clientUrl: CLIENT_URL,
+      testOrders: TEST_ORDERS,
+      lastError: lastHdfcError,
+    });
+  }
   const report = await diagnoseHdfc({
     apiKey: HDFC_API_KEY,
     merchantId: HDFC_MERCHANT_ID,
@@ -505,7 +555,7 @@ function buildOrder(items, customer, extra) {
     subtotal,
     shippingFee,
     total: subtotal + shippingFee,
-    payment: "online",
+    payment: PROVIDER,
     createdAt: Date.now(),
     isTest: TEST_ORDERS,
     ...extra,
@@ -600,39 +650,62 @@ async function confirmWithGateway(order, options) {
   return applyGatewayStatus(order, statusData, options);
 }
 
-// An earlier submission of the same checkout (a double click, a resent
-// request): hand back its payment page rather than creating a second order.
-function reuseAttempt(order, res) {
-  if (order?.paymentLink && order.paymentStatus.startsWith("Pending")) {
-    return res.json({
-      configured: true,
-      paymentLink: order.paymentLink,
-      orderNo: order.orderNo,
-      token: tokens.receipt(order.orderNo),
-    });
+// Asks whichever gateway took this order what actually happened to it.
+async function confirmOrder(order, options) {
+  if (order.paymentStatus.startsWith("Paid")) return { outcome: "paid", order };
+  if (order.payment === "razorpay" && razorpayRoutes) {
+    return razorpayRoutes.confirmOrder(order, options);
   }
-  return res
-    .status(409)
-    .json({ error: "This checkout was already submitted. Please refresh the page and try again." });
+  if (order.payment === "hdfc" && hdfcConfigured() && order.customer?.customerId) {
+    return confirmWithGateway(order, options);
+  }
+  return { outcome: "pending", order };
 }
 
-// Create a SmartGateway payment session for the current cart. The amount is
-// computed from the database, the order is recorded as pending, and the
-// shopper is sent the hosted payment-page link.
-app.post("/api/payments/hdfc/session", wrap(async (req, res) => {
+/**
+ * The first half of checkout, shared by both gateways: check the customer's
+ * details, rebuild the cart from the database, reuse an earlier submission of
+ * the same checkout, and record a pending order with a unique number.
+ *
+ * Returns the order, or null when it has already answered the request.
+ * `resume(earlier)` lets the caller hand back the payment details of an order
+ * that is already waiting to be paid.
+ */
+async function prepareOrder(req, res, { resume } = {}) {
   const rawItems = Array.isArray(req.body?.items) ? req.body.items.slice(0, 50) : [];
-  if (!rawItems.length) return res.status(400).json({ error: "Your cart is empty" });
+  if (!rawItems.length) {
+    res.status(400).json({ error: "Your cart is empty" });
+    return null;
+  }
   const { customer, error } = readCustomer(req.body);
-  if (error) return res.status(400).json({ error });
+  if (error) {
+    res.status(400).json({ error });
+    return null;
+  }
 
   // Prices and availability come from the catalog, never from the browser.
   const { items, error: cartError } = await resolveCartItems(rawItems);
-  if (cartError) return res.status(409).json({ error: cartError });
-
-  if (!hdfcConfigured()) {
-    // No keys → tell the client to fall back to the demo flow.
-    return res.json({ configured: false });
+  if (cartError) {
+    res.status(409).json({ error: cartError });
+    return null;
   }
+
+  if (!paymentsLive()) {
+    // No keys → tell the client to fall back to the demo flow.
+    res.json({ configured: false });
+    return null;
+  }
+
+  const reuse = (earlier) => {
+    const again = earlier && resume?.(earlier);
+    if (again) res.json(again);
+    else {
+      res.status(409).json({
+        error: "This checkout was already submitted. Please refresh the page and try again.",
+      });
+    }
+    return null;
+  };
 
   // One id per checkout submission, from the browser, so a repeated request
   // can't create a second order.
@@ -641,17 +714,17 @@ app.post("/api/payments/hdfc/session", wrap(async (req, res) => {
     : null;
   if (attemptId) {
     const earlier = await shop.findOrderByAttempt(attemptId);
-    if (earlier) return reuseAttempt(earlier, res);
+    if (earlier) return reuse(earlier);
   }
 
-  // x-customerid is reused on the status check, so it's stored with the order.
+  // HDFC's x-customerid is reused on its status check, so it is stored with
+  // the order either way.
   const customerWithId = {
     ...customer,
     customerId: "CUST" + crypto.randomUUID().replace(/-/g, "").slice(0, 14),
   };
-  let order;
   for (let attempt = 1; ; attempt++) {
-    order = buildOrder(items, customerWithId, {
+    const order = buildOrder(items, customerWithId, {
       orderNo: newOrderNo(),
       attemptId,
       paymentStatus: "Pending",
@@ -660,17 +733,38 @@ app.post("/api/payments/hdfc/session", wrap(async (req, res) => {
     });
     try {
       await shop.insertOrder(order);
-      break;
+      await shop.logEvent(order.orderNo, "order_created", {
+        total: order.total,
+        items: items.length,
+      });
+      return order;
     } catch (err) {
       if (attemptId && isUniqueViolation(err, "attempt_id")) {
-        return reuseAttempt(await shop.findOrderByAttempt(attemptId), res);
+        return reuse(await shop.findOrderByAttempt(attemptId));
       }
       if (isUniqueViolation(err, "order_no") && attempt < 3) continue;
       throw err;
     }
   }
+}
+
+// Create a SmartGateway payment session for the current cart: the amount comes
+// from the database, and the shopper is sent the hosted payment-page link.
+app.post("/api/payments/hdfc/session", wrap(async (req, res) => {
+  const order = await prepareOrder(req, res, {
+    resume: (earlier) =>
+      earlier.paymentLink && earlier.paymentStatus.startsWith("Pending")
+        ? {
+            configured: true,
+            provider: "hdfc",
+            paymentLink: earlier.paymentLink,
+            orderNo: earlier.orderNo,
+            token: tokens.receipt(earlier.orderNo),
+          }
+        : null,
+  });
+  if (!order) return;
   const { orderNo } = order;
-  await shop.logEvent(orderNo, "order_created", { total: order.total, items: items.length });
 
   // The return URL carries a code tied to this order (see security.js).
   const returnUrl = `${PUBLIC_SERVER_URL}/api/payments/hdfc/return/${tokens.returnRef(orderNo)}`;
@@ -678,7 +772,7 @@ app.post("/api/payments/hdfc/session", wrap(async (req, res) => {
     const { paymentLink, response } = await gateway.createSession({
       orderNo,
       amount: order.total,
-      customer: customerWithId,
+      customer: order.customer,
       returnUrl,
     });
     if (!isGatewayUrl(paymentLink)) {
@@ -690,7 +784,13 @@ app.post("/api/payments/hdfc/session", wrap(async (req, res) => {
       amount: order.total,
       payment_page_host: new URL(paymentLink).hostname,
     });
-    res.json({ configured: true, paymentLink, orderNo, token: tokens.receipt(orderNo) });
+    res.json({
+      configured: true,
+      provider: "hdfc",
+      paymentLink,
+      orderNo,
+      token: tokens.receipt(orderNo),
+    });
   } catch (err) {
     // Log the gateway's own message for us, but never show it to the shopper —
     // it can contain merchant ids and key diagnostics. The admin panel's
@@ -801,20 +901,37 @@ app.get("/api/orders/:orderNo", wrap(async (req, res) => {
   if (!order) return res.status(404).json({ error: "Order not found" });
 
   if (
-    hdfcConfigured() &&
     /^Pending/.test(order.paymentStatus) &&
-    order.customer?.customerId &&
     Date.now() - (lastLiveCheck.get(orderNo) || 0) > RECHECK_MS
   ) {
     lastLiveCheck.set(orderNo, Date.now());
     try {
-      order = (await confirmWithGateway(order, { source: "receipt page" })).order;
+      order = (await confirmOrder(order, { source: "receipt page" })).order;
     } catch (err) {
-      console.error(`[hdfc] live check failed for ${orderNo}:`, err.message);
+      console.error(`[payments] live check failed for ${orderNo}:`, err.message);
     }
   }
   res.json(publicReceipt(order));
 }));
+
+// ----- Razorpay ---------------------------------------------------------------
+// Its routes live in razorpayRoutes.js, and are only added when keys are set.
+const razorpayRoutes = razorpay
+  ? razorpayPayments({
+      shop,
+      tokens,
+      client: razorpay,
+      keyId: RAZORPAY_KEY_ID,
+      keySecret: RAZORPAY_KEY_SECRET,
+      webhookSecret: RAZORPAY_WEBHOOK_SECRET,
+      shopName: SHOP_NAME,
+      sendOrderEmail,
+      prepareOrder,
+      publicReceipt,
+      wrap,
+    })
+  : null;
+razorpayRoutes?.register(app);
 
 // ----- Orders (demo checkout) ---------------------------------------------
 // Used only when the real gateway is NOT configured, to simulate a paid order.
@@ -827,7 +944,7 @@ app.post("/api/orders", wrap(async (req, res) => {
   const { customer, error } = readCustomer(req.body);
   if (error) return res.status(400).json({ error });
 
-  if (hdfcConfigured()) {
+  if (paymentsLive()) {
     return res.status(400).json({
       error: "Please complete payment through the secure gateway.",
     });
@@ -871,17 +988,21 @@ app.get("/api/admin/orders/:orderNo/events", requireAuth, wrap(async (req, res) 
 app.post("/api/admin/orders/:orderNo/check", requireAuth, wrap(async (req, res) => {
   const order = await shop.getOrderByOrderNo(req.params.orderNo);
   if (!order) return res.status(404).json({ error: "Order not found" });
-  if (!hdfcConfigured() || !order.customer?.customerId) {
-    return res.status(400).json({ error: "This order didn't go through HDFC SmartGateway." });
-  }
-  let statusData;
   try {
-    statusData = await gateway.getOrderStatus(order.orderNo, order.customer.customerId);
+    if (order.payment === "razorpay" && razorpayRoutes && order.gatewayRef) {
+      const response = await razorpay.paymentsForOrder(order.gatewayRef);
+      const result = await razorpayRoutes.confirmOrder(order, { source: "admin check" });
+      return res.json({ order: result.order, response });
+    }
+    if (order.payment === "hdfc" && hdfcConfigured() && order.customer?.customerId) {
+      const statusData = await gateway.getOrderStatus(order.orderNo, order.customer.customerId);
+      const result = await applyGatewayStatus(order, statusData, { source: "admin check" });
+      return res.json({ order: result.order, response: statusData });
+    }
+    return res.status(400).json({ error: "This order didn't go through a payment gateway." });
   } catch (err) {
     return res.status(502).json({ error: err.message });
   }
-  const result = await applyGatewayStatus(order, statusData, { source: "admin check" });
-  res.json({ order: result.order, response: statusData });
 }));
 
 // ----- Catalog ---------------------------------------------------------------

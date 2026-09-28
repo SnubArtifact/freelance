@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { api } from "../api.js";
 
 // Admin-only check of the HDFC SmartGateway setup. Runs on demand rather than
@@ -60,14 +60,26 @@ export default function PaymentCheck() {
           )}
 
           <dl className="pay-check-grid">
-            <dt>Environment</dt>
-            <dd>{report.env} · {report.baseUrl}</dd>
-            <dt>Merchant id</dt>
-            <dd>{report.merchantId || "—"}</dd>
-            <dt>Client id</dt>
-            <dd>{report.clientId || "—"}</dd>
-            <dt>API key</dt>
-            <dd>{report.key.length} characters (never shown)</dd>
+            {/* Razorpay reports its own list of facts; HDFC has fixed ones. */}
+            {report.facts
+              ? report.facts.map(([label, value]) => (
+                  <Fragment key={label}>
+                    <dt>{label}</dt>
+                    <dd>{value}</dd>
+                  </Fragment>
+                ))
+              : (
+                <>
+                  <dt>Environment</dt>
+                  <dd>{report.env} · {report.baseUrl}</dd>
+                  <dt>Merchant id</dt>
+                  <dd>{report.merchantId || "—"}</dd>
+                  <dt>Client id</dt>
+                  <dd>{report.clientId || "—"}</dd>
+                  <dt>API key</dt>
+                  <dd>{report.key.length} characters (never shown)</dd>
+                </>
+              )}
             <dt>Return address</dt>
             <dd>{report.publicServerUrl}</dd>
             <dt>Last gateway error</dt>
@@ -78,7 +90,7 @@ export default function PaymentCheck() {
             </dd>
           </dl>
 
-          {report.probes.length > 0 && (
+          {report.probes?.length > 0 && (
             <div className="pay-check-probes">
               {report.probes.map((p) => (
                 <div key={`${p.env}-${p.resellerHeader}`}>

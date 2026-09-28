@@ -14,6 +14,24 @@ export function isGatewayUrl(link) {
   return GATEWAY_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
 }
 
+// Razorpay's payment window is opened by their own script, fetched from their
+// domain the first time a shopper needs it.
+let checkoutScript = null;
+export function loadRazorpayCheckout() {
+  if (window.Razorpay) return Promise.resolve(window.Razorpay);
+  checkoutScript ??= new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.onload = () => resolve(window.Razorpay);
+    script.onerror = () => {
+      checkoutScript = null;
+      reject(new Error("We couldn't load the payment window. Please check your connection and try again."));
+    };
+    document.head.appendChild(script);
+  });
+  return checkoutScript;
+}
+
 // Identifies one checkout submission (see api.createHdfcSession).
 export function newAttemptId() {
   return globalThis.crypto?.randomUUID?.() ??

@@ -175,6 +175,46 @@ export const api = {
     );
   },
 
+  // Razorpay: create the order its checkout window pays against. Only ids and
+  // quantities are sent; prices come from the server.
+  async razorpayOrder(items, customer, attemptId) {
+    return handle(
+      await fetch(apiUrl("/api/payments/razorpay/order"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: items.map(({ id, qty, name }) => ({ id, qty, name })),
+          customer,
+          attemptId,
+        }),
+      })
+    );
+  },
+
+  // Hands Razorpay's answer to the server, which checks it with Razorpay
+  // before calling anything paid. Returns the receipt.
+  async razorpayVerify(payload) {
+    return handle(
+      await fetch(apiUrl("/api/payments/razorpay/verify"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+    );
+  },
+
+  // The window was closed, or the payment failed. This can only ever record a
+  // failure; the server still asks Razorpay what really happened.
+  async razorpayCancel(payload) {
+    return handle(
+      await fetch(apiUrl("/api/payments/razorpay/cancel"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+    );
+  },
+
   // Admin-only: why is the payment gateway refusing? Makes no payment.
   async diagnosePayments() {
     return handleAuthed(

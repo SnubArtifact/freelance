@@ -57,6 +57,11 @@ create table if not exists shop.payment_events (
 );
 create index if not exists payment_events_order on shop.payment_events (order_no, id);
 
+-- The gateway's own id for this order (Razorpay's order_…), so its webhooks
+-- and status replies can be matched back to ours.
+alter table shop.orders add column if not exists gateway_ref text;
+create index if not exists orders_gateway_ref on shop.orders (gateway_ref);
+
 alter table shop.products enable row level security;
 alter table shop.orders enable row level security;
 alter table shop.payment_events enable row level security;
