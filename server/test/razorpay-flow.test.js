@@ -27,7 +27,7 @@ const freePort = () =>
   });
 
 // ---- Fake Razorpay ----------------------------------------------------------
-const razorpay = { orders: new Map(), payments: new Map(), nextId: 1 };
+const razorpay = { orders: new Map(), payments: new Map(), fetched: [], nextId: 1 };
 let razorpayServer;
 
 // Adds a payment to an order, the way Razorpay would once a shopper pays.
@@ -74,6 +74,7 @@ async function startRazorpay() {
     }
     const one = url.match(/^\/v1\/payments\/([^/]+)$/);
     if (req.method === "GET" && one) {
+      razorpay.fetched.push(decodeURIComponent(one[1]));
       const payment = razorpay.payments.get(decodeURIComponent(one[1]));
       return payment
         ? reply(200, payment)
@@ -189,7 +190,7 @@ describe("Razorpay checkout", () => {
     const [p] = await products();
     const { status, body } = await startCheckout([{ id: p.id, qty: 2, price: 1, name: "cheap" }]);
     assert.equal(status, 200);
-    const expected = p.price * 2 + (p.price * 2 > 4999 ? 0 : 99);
+    const expected = p.price * 2; // shipping is free
     assert.equal(body.amount, expected * 100, "paise, from the catalog price");
     assert.equal(razorpay.orders.get(body.razorpayOrderId).amount, expected * 100);
     assert.equal(razorpay.orders.get(body.razorpayOrderId).receipt, body.orderNo);
@@ -402,6 +403,57 @@ describe("Razorpay checkout", () => {
     assert.match(body.verdict, /accepted these test keys/);
     assert.ok(body.facts.some(([label, value]) => label === "Key id" && value === KEY_ID));
     assert.ok(!JSON.stringify(body).includes(KEY_SECRET));
+  });
+
+  test("every order carries the four UDF fields HDFC requires", async () => {
+    const [p] = await products();
+    const { body: session } = await startCheckout([{ id: p.id, qty: 2 }]);
+    const { notes } = razorpay.orders.get(session.razorpayOrderId);
+
+    assert.equal(notes.order_no, session.orderNo);
+    assert.match(notes.udf1, new RegExp(`${p.name} x2`), "UDF1: what was bought");
+    assert.equal(notes.udf3, customer.phone, "UDF3: contact number");
+    assert.equal(notes.udf4, `${customer.address}, ${customer.city}, ${customer.pincode}`, "UDF4: billing address");
+    assert.match(notes.udf5, new RegExp(session.orderNo), "UDF5: merchant's own reference");
+    for (const value of Object.values(notes)) assert.ok(value.length <= 250);
+  });
+
+  test("every confirmation goes through Fetch Single Payment, as HDFC requires", async () => {
+    const { session, payment } = await buyOne();
+    razorpay.fetched.length = 0;
+
+    await post("/api/payments/razorpay/verify", {
+      orderNo: session.orderNo,
+      token: session.token,
+      razorpay_order_id: session.razorpayOrderId,
+      razorpay_payment_id: payment.id,
+      razorpay_signature: sign(session.razorpayOrderId, payment.id),
+    });
+    assert.ok(razorpay.fetched.includes(payment.id), "the checkout window's claim is checked against Razorpay");
+
+    // A webhook is signed, but its contents are still not taken on trust.
+    const quiet = await buyOne();
+    razorpay.fetched.length = 0;
+    const body = JSON.stringify({
+      event: "payment.captured",
+      payload: { payment: { entity: { ...quiet.payment, amount: 1 } } },
+    });
+    await fetch(`${base}/api/payments/razorpay/webhook`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Razorpay-Signature": crypto.createHmac("sha256", WEBHOOK_SECRET).update(body).digest("hex"),
+      },
+      body,
+    });
+    for (let i = 0; i < 40 && !razorpay.fetched.includes(quiet.payment.id); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(razorpay.fetched.includes(quiet.payment.id), "the webhook's figures are re-read from Razorpay");
+    const { body: rec } = await json(
+      await fetch(`${base}/api/orders/${quiet.session.orderNo}?t=${quiet.session.token}`)
+    );
+    assert.equal(rec.outcome, "paid", "the real payment, not the webhook's altered amount, decides");
   });
 
   test("the key secret is never written to the log", () => {

@@ -30,6 +30,9 @@ services:
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
+      # true while the bank's UAT keys are in use, so orders are marked TEST.
+      - key: PAYMENT_TEST_MODE
+        sync: false
       - key: HDFC_API_KEY
         sync: false
       - key: HDFC_MERCHANT_ID

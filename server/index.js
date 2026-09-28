@@ -6,7 +6,14 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyStockChange, hasTrackedStock, normalizeProduct } from "./catalog.js";
+import {
+  allImages,
+  applyStockChange,
+  findColor,
+  hasTrackedStock,
+  normalizeCategories,
+  normalizeProduct,
+} from "./catalog.js";
 import { openDatabase } from "./db/connect.js";
 import { diagnoseHdfc } from "./hdfcDiagnose.js";
 import {
@@ -87,7 +94,13 @@ const RAZORPAY_WEBHOOK_SECRET = (process.env.RAZORPAY_WEBHOOK_SECRET || "").trim
 // Test orders are marked as such everywhere so they are never shipped: HDFC's
 // auditors place them with test cards, and Razorpay's test keys take no real
 // money.
-const TEST_ORDERS = HDFC_ENV === "sandbox" || RAZORPAY_KEY_ID.startsWith("rzp_test");
+// PAYMENT_TEST_MODE=true marks orders as tests whatever the keys look like:
+// HDFC issues its own UAT keys for the Razorpay-based gateway, and they don't
+// always carry the rzp_test_ prefix.
+const TEST_ORDERS =
+  HDFC_ENV === "sandbox" ||
+  RAZORPAY_KEY_ID.startsWith("rzp_test") ||
+  /^(1|true|yes)$/i.test((process.env.PAYMENT_TEST_MODE || "").trim());
 
 const PUBLIC_SERVER_URL = (
   process.env.PUBLIC_SERVER_URL || `http://localhost:${PORT}`
@@ -225,7 +238,7 @@ function orderEmailHtml(order) {
   const rows = order.items
     .map(
       (i) => `<tr>
-        <td style="padding:8px 0;color:#2a2024">${e(i.name)} &times; ${e(i.qty)}</td>
+        <td style="padding:8px 0;color:#2a2024">${e(i.name)}${i.color ? ` (${e(i.color)})` : ""} &times; ${e(i.qty)}</td>
         <td style="padding:8px 0;text-align:right;color:#6d1f3a">${inr(i.price * i.qty)}</td>
       </tr>`
     )
@@ -372,7 +385,7 @@ const upload = multer({
 function forgetImages(urls) {
   if (!urls.length) return;
   (async () => {
-    const inUse = new Set((await shop.listProducts()).flatMap((p) => p.images || []));
+    const inUse = new Set((await shop.listProducts()).flatMap(allImages));
     for (const url of urls) {
       if (inUse.has(url)) continue;
       try {
@@ -504,6 +517,8 @@ async function resolveCartItems(rawItems) {
   const found = await shop.getProducts(rawItems.map((raw) => String(raw?.id ?? "")));
   const catalog = new Map(found.map((p) => [p.id, p]));
   const resolved = [];
+  // Stock is counted per saree, so two colours of one saree share it.
+  const wanted = new Map();
 
   for (const raw of rawItems) {
     const product = catalog.get(String(raw?.id ?? ""));
@@ -518,10 +533,12 @@ async function resolveCartItems(rawItems) {
     }
     // An untracked stock count means availability rests on inStock alone.
     if (hasTrackedStock(product)) {
+      const total = (wanted.get(product.id) || 0) + qty;
+      wanted.set(product.id, total);
       if (product.stock <= 0) {
         return { error: `${product.name} is sold out.` };
       }
-      if (qty > product.stock) {
+      if (total > product.stock) {
         return {
           error:
             product.stock === 1
@@ -531,12 +548,25 @@ async function resolveCartItems(rawItems) {
       }
     }
 
+    // A saree that comes in colours is bought in one of them: the one asked
+    // for, or its first when none was (a cart saved before colours existed).
+    let color = null;
+    if (product.colors?.length) {
+      color = raw.color ? findColor(product, raw.color) : product.colors[0];
+      if (!color) {
+        return {
+          error: `${product.name} is no longer available in ${String(raw.color).slice(0, 60)}.`,
+        };
+      }
+    }
+
     resolved.push({
       id: product.id,
       name: product.name,
+      ...(color ? { color: color.name } : {}),
       price: Number(product.price) || 0,
       qty,
-      image: product.images?.[0] || "",
+      image: color?.images?.[0] || product.images?.[0] || "",
     });
   }
 
@@ -547,7 +577,7 @@ async function resolveCartItems(rawItems) {
 // been through resolveCartItems, so the prices here are the catalog's.
 function buildOrder(items, customer, extra) {
   const subtotal = items.reduce((s, i) => s + i.price * i.qty, 0);
-  const shippingFee = subtotal > 4999 ? 0 : 99;
+  const shippingFee = 0; // shipping is free on every order
   return {
     id: crypto.randomUUID(),
     customer,
@@ -1016,6 +1046,19 @@ app.get("/api/products/:id", wrap(async (req, res) => {
   res.json(product);
 }));
 
+// ----- Categories ------------------------------------------------------------
+app.get("/api/categories", wrap(async (_req, res) => {
+  res.json(await shop.listCategories());
+}));
+
+// Replaces the whole list. An entry's `was` is its name before this edit, so
+// renaming a category moves its sarees along with it.
+app.put("/api/categories", requireAuth, wrap(async (req, res) => {
+  const { categories, renames, error } = normalizeCategories(req.body?.categories);
+  if (error) return res.status(400).json({ error });
+  res.json(await shop.saveCategories(categories, renames));
+}));
+
 app.post("/api/upload", requireAuth, upload.array("images", 6), wrap(async (req, res) => {
   try {
     const urls = await Promise.all((req.files || []).map((file) => images.save(file)));
@@ -1040,7 +1083,8 @@ app.put("/api/products/:id", requireAuth, wrap(async (req, res) => {
   const existing = await shop.getProduct(req.params.id);
   if (!existing) return res.status(404).json({ error: "Not found" });
   const updated = await shop.replaceProduct({ ...existing, ...normalizeProduct(req.body) });
-  forgetImages((existing.images || []).filter((url) => !updated.images.includes(url)));
+  const kept = new Set(allImages(updated));
+  forgetImages(allImages(existing).filter((url) => !kept.has(url)));
   res.json(updated);
 }));
 
@@ -1066,7 +1110,7 @@ app.post("/api/products/:id/stock", requireAuth, wrap(async (req, res) => {
 
 app.delete("/api/products/:id", requireAuth, wrap(async (req, res) => {
   const removed = await shop.deleteProduct(req.params.id);
-  if (removed) forgetImages(removed.images || []);
+  if (removed) forgetImages(allImages(removed));
   res.json({ ok: true });
 }));
 

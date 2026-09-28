@@ -64,10 +64,10 @@ export default function Receipt({ order, onRetry }) {
         {order.items?.length > 0 && (
           <table className="receipt-items">
             <tbody>
-              {order.items.map((item) => (
-                <tr key={item.id}>
+              {order.items.map((item, n) => (
+                <tr key={n}>
                   <td>
-                    {item.name} × {item.qty}
+                    {item.name}{item.color ? ` (${item.color})` : ""} × {item.qty}
                   </td>
                   <td>{formatPrice(item.price * item.qty)}</td>
                 </tr>

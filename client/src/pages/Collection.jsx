@@ -5,6 +5,7 @@ import ProductCard from "../components/ProductCard.jsx";
 
 export default function Collection() {
   const [products, setProducts] = useState([]);
+  const [shopCategories, setShopCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [params, setParams] = useSearchParams();
   const [sort, setSort] = useState("new");
@@ -18,12 +19,17 @@ export default function Collection() {
       .then(setProducts)
       .catch(() => setProducts([]))
       .finally(() => setLoading(false));
+    api.listCategories().then(setShopCategories).catch(() => {});
   }, []);
 
+  // The admin's categories in their order, leaving out any with no sarees;
+  // then any category a saree uses that isn't on the list.
   const categories = useMemo(() => {
-    const set = new Set(products.map((p) => p.category).filter(Boolean));
-    return ["All", ...[...set].sort()];
-  }, [products]);
+    const used = new Set(products.map((p) => p.category).filter(Boolean));
+    const listed = shopCategories.map((c) => c.name).filter((name) => used.has(name));
+    const rest = [...used].filter((name) => !listed.includes(name)).sort();
+    return ["All", ...listed, ...rest];
+  }, [products, shopCategories]);
 
   const visible = useMemo(() => {
     let list =
@@ -96,7 +102,7 @@ export default function Collection() {
 
       {loading ? (
         <div className="grid">
-          {Array.from({ length: 8 }).map((_, i) => (
+          {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="card skeleton" />
           ))}
         </div>

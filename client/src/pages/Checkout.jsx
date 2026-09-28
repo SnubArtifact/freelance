@@ -253,8 +253,7 @@ export default function Checkout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const shipping = subtotal > 4999 ? 0 : 99;
-  const total = subtotal + shipping;
+  const total = subtotal; // shipping is free
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -492,8 +491,10 @@ export default function Checkout() {
             <h3>Your Order</h3>
             <div className="mini-items">
               {items.map((i) => (
-                <div key={i.id} className="mini-row">
-                  <span className="mini-name">{i.name} × {i.qty}</span>
+                <div key={i.key} className="mini-row">
+                  <span className="mini-name">
+                    {i.name}{i.color ? ` (${i.color})` : ""} × {i.qty}
+                  </span>
                   <span>{formatPrice(i.price * i.qty)}</span>
                 </div>
               ))}
@@ -503,7 +504,7 @@ export default function Checkout() {
             </div>
             <div className="sum-row">
               <span>Shipping</span>
-              <span>{shipping === 0 ? "Free" : formatPrice(shipping)}</span>
+              <span>Free</span>
             </div>
             <div className="sum-row total">
               <span>Total</span><span>{formatPrice(total)}</span>

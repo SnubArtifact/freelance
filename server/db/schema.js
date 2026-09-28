@@ -62,7 +62,19 @@ create index if not exists payment_events_order on shop.payment_events (order_no
 alter table shop.orders add column if not exists gateway_ref text;
 create index if not exists orders_gateway_ref on shop.orders (gateway_ref);
 
+-- The colours a saree comes in: [{ name, hex, images }].
+alter table shop.products add column if not exists colors jsonb not null default '[]';
+
+-- Shop-wide settings the admin can change, one JSON value per key (e.g. the
+-- category list). A missing key means "still the default".
+create table if not exists shop.settings (
+  key        text primary key,
+  value      jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
 alter table shop.products enable row level security;
 alter table shop.orders enable row level security;
 alter table shop.payment_events enable row level security;
+alter table shop.settings enable row level security;
 `;

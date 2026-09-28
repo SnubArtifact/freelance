@@ -59,6 +59,28 @@ export function razorpayClient({ keyId, keySecret, apiBase = "https://api.razorp
 export const toPaise = (rupees) => Math.round(Number(rupees) * 100);
 
 /**
+ * HDFC's Ecom Security Policy requires four User Defined Fields on every
+ * transaction, so any payment can be traced back to what was bought and by
+ * whom. Razorpay carries them in the order's notes. HDFC's list skips UDF2.
+ *
+ * Notes are capped at 15 pairs, and a value that is too long is refused, so
+ * each one is trimmed.
+ */
+export function udfNotes(order, shopName = "") {
+  const customer = order.customer || {};
+  const items = (order.items || []).map((i) => `${i.name} x${i.qty}`).join(", ");
+  const address = [customer.address, customer.city, customer.pincode].filter(Boolean).join(", ");
+  const clip = (value, limit = 250) => String(value ?? "").slice(0, limit);
+  return {
+    order_no: order.orderNo,
+    udf1: clip(items ? `Saree order: ${items}` : "Saree order"),
+    udf3: clip(customer.phone),
+    udf4: clip(address),
+    udf5: clip(`${shopName} order ${order.orderNo}`.trim()),
+  };
+}
+
+/**
  * Checkout hands the browser three values when a payment succeeds. This proves
  * they came from Razorpay and belong together: HMAC-SHA256 of
  * "<order_id>|<payment_id>" with the key secret, as hex. Razorpay documents it

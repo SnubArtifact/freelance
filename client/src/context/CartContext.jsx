@@ -12,10 +12,35 @@ function stillAvailable(product) {
   return !tracked || product.stock > 0;
 }
 
+// One cart line per saree and colour, so two colours of a saree are two lines.
+export const lineKey = (item) => (item.color ? `${item.id}::${item.color}` : String(item.id));
+
+// The colour of a saree with this name, ignoring case.
+export const colorOf = (product, name) =>
+  (product?.colors || []).find(
+    (c) => c.name.toLowerCase() === String(name || "").toLowerCase()
+  ) || null;
+
+// The photo that shows a saree in a colour: the colour's own, else the saree's.
+export const imageFor = (product, color) =>
+  color?.images?.[0] || product?.images?.[0] || "";
+
+// Adds up lines that ended up the same (e.g. a colour filled in on reconcile).
+function mergeLines(list) {
+  const byKey = new Map();
+  for (const item of list) {
+    const key = lineKey(item);
+    const existing = byKey.get(key);
+    byKey.set(key, existing ? { ...existing, qty: existing.qty + item.qty } : { ...item, key });
+  }
+  return [...byKey.values()];
+}
+
 export function CartProvider({ children }) {
   const [items, setItems] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+      // Carts saved before colours existed have no line keys yet.
+      return mergeLines(JSON.parse(localStorage.getItem(STORAGE_KEY)) || []);
     } catch {
       return [];
     }
@@ -25,37 +50,29 @@ export function CartProvider({ children }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   }, [items]);
 
-  function addToCart(product, qty = 1) {
-    setItems((prev) => {
-      const existing = prev.find((i) => i.id === product.id);
-      if (existing) {
-        return prev.map((i) =>
-          i.id === product.id ? { ...i, qty: i.qty + qty } : i
-        );
-      }
-      return [
-        ...prev,
-        {
-          id: product.id,
-          name: product.name,
-          price: product.price,
-          image: product.images?.[0] || "",
-          qty,
-        },
-      ];
-    });
+  // `colorName` picks one of the saree's colours; a saree that has colours
+  // gets its first when none is given.
+  function addToCart(product, qty = 1, colorName = null) {
+    const color = colorOf(product, colorName) || product.colors?.[0] || null;
+    const line = {
+      id: product.id,
+      name: product.name,
+      ...(color ? { color: color.name } : {}),
+      price: product.price,
+      image: imageFor(product, color),
+      qty,
+    };
+    setItems((prev) => mergeLines([...prev, line]));
   }
 
-  function updateQty(id, qty) {
+  function updateQty(key, qty) {
     setItems((prev) =>
-      prev
-        .map((i) => (i.id === id ? { ...i, qty: Math.max(1, qty) } : i))
-        .filter((i) => i.qty > 0)
+      prev.map((i) => (i.key === key ? { ...i, qty: Math.max(1, qty) } : i))
     );
   }
 
-  function removeFromCart(id) {
-    setItems((prev) => prev.filter((i) => i.id !== id));
+  function removeFromCart(key) {
+    setItems((prev) => prev.filter((i) => i.key !== key));
   }
 
   function clearCart() {
@@ -63,27 +80,37 @@ export function CartProvider({ children }) {
   }
 
   // Brings the saved cart in line with the live catalog: drops sarees that
-  // were deleted or sold out, caps quantities at the stock left, and refreshes
-  // names, prices and photos. Returns the names of anything dropped.
+  // were deleted or sold out, and colours no longer offered; caps quantities
+  // at the stock left, and refreshes names, prices and photos. Returns the
+  // names of anything dropped.
   function reconcile(catalog) {
     const byId = new Map(catalog.map((p) => [p.id, p]));
+    // A line is kept if its saree is on sale and, when it names a colour,
+    // still comes in that colour.
+    const keep = (i) => {
+      const p = byId.get(i.id);
+      return stillAvailable(p) && (!i.color || !p.colors?.length || Boolean(colorOf(p, i.color)));
+    };
     const dropped = items
-      .filter((i) => !stillAvailable(byId.get(i.id)))
-      .map((i) => i.name);
+      .filter((i) => !keep(i))
+      .map((i) => (i.color ? `${i.name} (${i.color})` : i.name));
     setItems((prev) =>
-      prev
-        .filter((i) => stillAvailable(byId.get(i.id)))
-        .map((i) => {
+      mergeLines(
+        prev.filter(keep).map((i) => {
           const p = byId.get(i.id);
           const tracked = p.stock !== null && p.stock !== undefined;
+          const color = colorOf(p, i.color) || p.colors?.[0] || null;
+          const { color: _old, ...rest } = i;
           return {
-            ...i,
+            ...rest,
+            ...(color ? { color: color.name } : {}),
             name: p.name,
             price: p.price,
-            image: p.images?.[0] || "",
+            image: imageFor(p, color),
             qty: tracked ? Math.min(i.qty, p.stock) : i.qty,
           };
         })
+      )
     );
     return dropped;
   }

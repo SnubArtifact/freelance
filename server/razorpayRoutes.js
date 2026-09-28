@@ -2,6 +2,7 @@ import {
   interpretPayment,
   pickPayment,
   toPaise,
+  udfNotes,
   verifyCheckoutSignature,
   verifyWebhookSignature,
 } from "./razorpay.js";
@@ -92,12 +93,24 @@ export function razorpayPayments(ctx) {
     };
   }
 
-  // Asks Razorpay what happened to an order, rather than believing the browser.
-  async function confirmOrder(order, { source }) {
+  /**
+   * The dual enquiry HDFC requires: whatever anyone else says, the payment is
+   * read back from Razorpay's Fetch Single Payment API before it counts.
+   * `known` is a payment we've been handed (by checkout or a webhook) and is
+   * only ever used to learn its id.
+   */
+  async function confirmOrder(order, { source, known } = {}) {
     if (order.paymentStatus.startsWith("Paid")) return { outcome: "paid", order };
-    if (!order.gatewayRef) return { outcome: "pending", order };
-    const { items } = await client.paymentsForOrder(order.gatewayRef);
-    return applyPayment(order, pickPayment(items), { source });
+    let candidate = known || null;
+    if (!candidate) {
+      if (!order.gatewayRef) return { outcome: "pending", order };
+      const { items } = await client.paymentsForOrder(order.gatewayRef);
+      candidate = pickPayment(items);
+    }
+    if (!candidate?.id) return applyPayment(order, candidate, { source });
+    // Fetch Single Payment — the server-to-server check that decides.
+    const payment = await client.getPayment(candidate.id);
+    return applyPayment(order, payment, { source });
   }
 
   // Powers the admin panel's "Check payment gateway" panel: proves the keys
@@ -159,7 +172,7 @@ export function razorpayPayments(ctx) {
         const created = await client.createOrder({
           orderNo: order.orderNo,
           amountPaise,
-          notes: { order_no: order.orderNo, shop: shopName },
+          notes: udfNotes(order, shopName),
         });
         const withRef = await shop.setGatewayRef(order.orderNo, created.id);
         await shop.logEvent(order.orderNo, "session_created", {
@@ -238,8 +251,10 @@ export function razorpayPayments(ctx) {
       }
 
       try {
-        const payment = await client.getPayment(paymentId);
-        const result = await applyPayment(order, payment, { source: "checkout window" });
+        const result = await confirmOrder(order, {
+          source: "checkout window",
+          known: { id: paymentId },
+        });
         return res.json(publicReceipt(result.order));
       } catch (err) {
         console.error(`[razorpay] verify failed for ${orderNo}:`, err.message);
@@ -289,7 +304,10 @@ export function razorpayPayments(ctx) {
         const order = await shop.findOrderByGatewayRef(razorpayOrderId);
         if (!order) return;
         await shop.logEvent(order.orderNo, "webhook_received", { event: req.body?.event || "unknown" });
-        await applyPayment(order, payment, { source: `webhook ${req.body?.event || ""}`.trim() });
+        await confirmOrder(order, {
+          source: `webhook ${req.body?.event || ""}`.trim(),
+          known: payment,
+        });
       } catch (err) {
         console.error("[razorpay] webhook handling failed:", err.message);
       }

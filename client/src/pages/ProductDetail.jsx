@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
-import { useParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, formatPrice } from "../api.js";
 import { assetUrl } from "../config.js";
-import { useCart } from "../context/CartContext.jsx";
+import { colorOf, lineKey, useCart } from "../context/CartContext.jsx";
+import ColorSwatches from "../components/ColorSwatches.jsx";
 
 export default function ProductDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { addToCart } = useCart();
+  const { items, addToCart } = useCart();
+  // The chosen colour lives in the address, so it survives a refresh and can
+  // be shared.
+  const [params, setParams] = useSearchParams();
   const [product, setProduct] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -42,18 +46,32 @@ export default function ProductDetail() {
         )
       : 0;
 
+  const colors = product.colors || [];
+  const color = colorOf(product, params.get("color")) || colors[0] || null;
+  const inCart = items.some((i) => i.key === lineKey({ id: product.id, color: color?.name }));
+
+  function pickColor(name) {
+    setParams({ color: name }, { replace: true });
+    setActive(0);
+  }
+
   function handleAdd() {
-    addToCart(product);
+    addToCart(product, 1, color?.name);
     setAdded(true);
     setTimeout(() => setAdded(false), 1800);
   }
 
   function buyNow() {
-    addToCart(product);
+    if (!inCart) addToCart(product, 1, color?.name);
     navigate("/checkout");
   }
 
-  const images = product.images?.length ? product.images : [""];
+  // A colour with its own photos shows those; otherwise the saree's.
+  const images = color?.images?.length
+    ? color.images
+    : product.images?.length
+    ? product.images
+    : [""];
 
   return (
     <div className="page detail">
@@ -66,7 +84,10 @@ export default function ProductDetail() {
         <div className="detail-gallery">
           <div className="detail-main">
             {images[active] ? (
-              <img src={assetUrl(images[active])} alt={product.name} />
+              <img
+                src={assetUrl(images[active])}
+                alt={color ? `${product.name} in ${color.name}` : product.name}
+              />
             ) : (
               <div className="placeholder">No image</div>
             )}
@@ -100,13 +121,26 @@ export default function ProductDetail() {
             )}
           </div>
 
+          {colors.length > 0 && (
+            <div className="detail-colors">
+              <span className="detail-colors-label">
+                Colour: <strong>{color?.name}</strong>
+              </span>
+              <ColorSwatches
+                colors={colors}
+                selected={color?.name}
+                onSelect={pickColor}
+              />
+            </div>
+          )}
+
           <p className="detail-desc">{product.description}</p>
 
           <ul className="spec">
             {product.fabric && (
               <li><span>Fabric</span><strong>{product.fabric}</strong></li>
             )}
-            {product.color && (
+            {product.color && !colors.length && (
               <li><span>Color</span><strong>{product.color}</strong></li>
             )}
             <li>
@@ -127,7 +161,7 @@ export default function ProductDetail() {
               disabled={!product.inStock}
               onClick={handleAdd}
             >
-              {added ? "Added ✓" : "Add to Cart"}
+              {added ? "Added ✓" : inCart ? "Add Another" : "Add to Cart"}
             </button>
             <button
               className="btn btn-ghost"
@@ -137,10 +171,15 @@ export default function ProductDetail() {
               Buy Now
             </button>
           </div>
+          {inCart && (
+            <Link to="/cart" className="btn btn-ghost full go-cart">
+              Go to Cart →
+            </Link>
+          )}
 
           <div className="detail-trust">
             <span>✦ Authentic weave</span>
-            <span>✦ Pan-India shipping</span>
+            <span>✦ Free Pan-India shipping</span>
             <span>✦ 7-day returns</span>
           </div>
         </div>

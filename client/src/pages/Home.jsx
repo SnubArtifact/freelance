@@ -3,16 +3,10 @@ import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import ProductCard from "../components/ProductCard.jsx";
 
-const CATEGORIES = [
-  { name: "Kanjivaram", tag: "Heirloom silk" },
-  { name: "Banarasi", tag: "Festive weaves" },
-  { name: "Georgette", tag: "Designer drapes" },
-  { name: "Cotton", tag: "Everyday ease" },
-];
-
 export default function Home() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [categories, setCategories] = useState([]);
 
   useEffect(() => {
     api
@@ -20,10 +14,14 @@ export default function Home() {
       .then(setProducts)
       .catch(() => setProducts([]))
       .finally(() => setLoading(false));
+    api
+      .listCategories()
+      .then((list) => setCategories(list.filter((c) => c.home)))
+      .catch(() => {});
   }, []);
 
-  const featured = products.filter((p) => p.featured).slice(0, 4);
-  const showcase = (featured.length ? featured : products).slice(0, 4);
+  const featured = products.filter((p) => p.featured).slice(0, 6);
+  const showcase = (featured.length ? featured : products).slice(0, 6);
 
   return (
     <div className="home">
@@ -60,19 +58,21 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Categories */}
+      {/* Categories — the ones the admin marked "show on homepage" */}
+      {categories.length > 0 && (
       <section className="cats">
-        {CATEGORIES.map((c) => (
+        {categories.map((c) => (
           <Link
             key={c.name}
             to={`/collection?category=${encodeURIComponent(c.name)}`}
             className="cat-chip"
           >
             <span className="cat-name">{c.name}</span>
-            <span className="cat-tag">{c.tag}</span>
+            {c.tagline && <span className="cat-tag">{c.tagline}</span>}
           </Link>
         ))}
       </section>
+      )}
 
       {/* Featured */}
       <section className="section">
@@ -88,7 +88,7 @@ export default function Home() {
 
         {loading ? (
           <div className="grid">
-            {Array.from({ length: 4 }).map((_, i) => (
+            {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="card skeleton" />
             ))}
           </div>
@@ -110,8 +110,8 @@ export default function Home() {
           <span>Sourced directly from master weavers</span>
         </div>
         <div className="promise-item">
-          <strong>Pan-India Shipping</strong>
-          <span>Safely delivered to your doorstep</span>
+          <strong>Free Pan-India Shipping</strong>
+          <span>No delivery charge on any order</span>
         </div>
         
       </section>

@@ -22,8 +22,6 @@ export default function Cart() {
     );
   }
 
-  const shipping = subtotal > 4999 ? 0 : 99;
-
   return (
     <div className="page cart">
       <div className="page-head">
@@ -35,7 +33,7 @@ export default function Cart() {
       <div className="cart-grid">
         <div className="cart-items">
           {items.map((item) => (
-            <div key={item.id} className="cart-row">
+            <div key={item.key} className="cart-row">
               <Link to={`/product/${item.id}`} className="cart-thumb">
                 {item.image ? (
                   <img src={assetUrl(item.image)} alt={item.name} />
@@ -47,17 +45,18 @@ export default function Cart() {
                 <Link to={`/product/${item.id}`} className="cart-name">
                   {item.name}
                 </Link>
+                {item.color && <span className="cart-color">Colour: {item.color}</span>}
                 <span className="cart-unit">{formatPrice(item.price)}</span>
               </div>
               <div className="qty">
-                <button onClick={() => updateQty(item.id, item.qty - 1)}>−</button>
+                <button onClick={() => updateQty(item.key, item.qty - 1)}>−</button>
                 <span>{item.qty}</span>
-                <button onClick={() => updateQty(item.id, item.qty + 1)}>+</button>
+                <button onClick={() => updateQty(item.key, item.qty + 1)}>+</button>
               </div>
               <div className="cart-line">{formatPrice(item.price * item.qty)}</div>
               <button
                 className="cart-remove"
-                onClick={() => removeFromCart(item.id)}
+                onClick={() => removeFromCart(item.key)}
                 aria-label="Remove"
               >
                 ✕
@@ -74,17 +73,12 @@ export default function Cart() {
           </div>
           <div className="sum-row">
             <span>Shipping</span>
-            <span>{shipping === 0 ? "Free" : formatPrice(shipping)}</span>
+            <span>Free</span>
           </div>
           <div className="sum-row total">
             <span>Total</span>
-            <span>{formatPrice(subtotal + shipping)}</span>
+            <span>{formatPrice(subtotal)}</span>
           </div>
-          {shipping > 0 && (
-            <p className="sum-note">
-              Add {formatPrice(5000 - subtotal)} more for free shipping.
-            </p>
-          )}
           <Link to="/checkout" className="btn btn-primary full">
             Proceed to Checkout
           </Link>

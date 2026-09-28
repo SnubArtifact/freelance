@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { sampleProducts } from "./catalog.js";
+import { DEFAULT_CATEGORIES, sampleProducts } from "./catalog.js";
 import { SCHEMA } from "./db/schema.js";
 
 // Postgres returns money (numeric) and big numbers as text.
@@ -17,6 +17,7 @@ function toProduct(row) {
     fabric: row.fabric,
     color: row.color,
     images: row.images || [],
+    colors: row.colors || [],
     featured: row.featured,
     inStock: row.in_stock,
     stock: num(row.stock),
@@ -57,7 +58,7 @@ export function isUniqueViolation(err, column) {
 }
 
 const PRODUCT_COLUMNS =
-  "id, name, description, price, original_price, category, fabric, color, images, featured, in_stock, stock, created_at";
+  "id, name, description, price, original_price, category, fabric, color, images, featured, in_stock, stock, created_at, colors";
 
 const productParams = (p) => [
   String(p.id),
@@ -73,12 +74,13 @@ const productParams = (p) => [
   p.inStock !== false,
   p.stock ?? null,
   Number(p.createdAt) || Date.now(),
+  JSON.stringify(p.colors || []),
 ];
 
 function insertProduct(run, product) {
   return run(
     `insert into shop.products (${PRODUCT_COLUMNS})
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)`,
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14::jsonb)`,
     productParams(product)
   );
 }
@@ -156,7 +158,8 @@ export async function openShop(db, { seed = true, legacyDir = null } = {}) {
         `update shop.products
             set name = $2, description = $3, price = $4, original_price = $5,
                 category = $6, fabric = $7, color = $8, images = $9::jsonb,
-                featured = $10, in_stock = $11, stock = $12, created_at = $13
+                featured = $10, in_stock = $11, stock = $12, created_at = $13,
+                colors = $14::jsonb
           where id = $1
         returning *`,
         productParams(p),
@@ -164,6 +167,44 @@ export async function openShop(db, { seed = true, legacyDir = null } = {}) {
       ),
     deleteProduct: (id) =>
       one("delete from shop.products where id = $1 returning *", [String(id)], toProduct),
+
+    // ----- Categories --------------------------------------------------------
+    // The admin's list, in their order. Until they first save one, it's the
+    // defaults plus any category a saree already uses.
+    async listCategories() {
+      const [row] = await q("select value from shop.settings where key = 'categories'");
+      if (row) return row.value;
+      const used = await q("select distinct category from shop.products order by category");
+      const known = new Set(DEFAULT_CATEGORIES.map((c) => c.name));
+      return [
+        ...DEFAULT_CATEGORIES,
+        ...used
+          .map((r) => r.category)
+          .filter((name) => name && !known.has(name))
+          .map((name) => ({ name, tagline: "", home: false })),
+      ];
+    },
+
+    // Saves the list, and moves the sarees of each renamed category along in
+    // the same transaction. One UPDATE does every rename from the old values,
+    // so swapping two names works.
+    saveCategories: (categories, renames = []) =>
+      db.transaction(async (tx) => {
+        if (renames.length) {
+          await tx(
+            `update shop.products p set category = r.new_name
+               from unnest($1::text[], $2::text[]) as r(old_name, new_name)
+              where p.category = r.old_name`,
+            [renames.map((r) => r.from), renames.map((r) => r.to)]
+          );
+        }
+        await tx(
+          `insert into shop.settings (key, value) values ('categories', $1::jsonb)
+           on conflict (key) do update set value = excluded.value, updated_at = now()`,
+          [JSON.stringify(categories)]
+        );
+        return categories;
+      }),
 
     // ----- Orders ------------------------------------------------------------
     async insertOrder(o) {

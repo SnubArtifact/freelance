@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyStockChange, normalizeProduct, normalizeStock } from "../catalog.js";
+import {
+  allImages,
+  applyStockChange,
+  findColor,
+  normalizeCategories,
+  normalizeColors,
+  normalizeProduct,
+  normalizeStock,
+} from "../catalog.js";
 
 test("normalizeStock: blank means untracked; numbers are whole and never negative", () => {
   assert.equal(normalizeStock(""), null);
@@ -39,4 +47,45 @@ test("applyStockChange leaves the original untouched", () => {
 test("normalizeProduct keeps only non-empty string image URLs", () => {
   const p = normalizeProduct({ name: " Silk ", price: "10", images: ["a.jpg", "", 5, null] });
   assert.deepEqual([p.name, p.price, p.images], ["Silk", 10, ["a.jpg"]]);
+});
+
+test("normalizeColors drops nameless and repeated colours and bad swatches", () => {
+  assert.deepEqual(
+    normalizeColors([
+      { name: " Maroon ", hex: "#6D1F3A", images: ["m.jpg", ""] },
+      { name: "maroon", hex: "#000000" },
+      { name: "", hex: "#ffffff" },
+      { name: "Teal", hex: "red" },
+      "junk",
+    ]),
+    [
+      { name: "Maroon", hex: "#6d1f3a", images: ["m.jpg"] },
+      { name: "Teal", hex: "", images: [] },
+    ]
+  );
+  assert.deepEqual(normalizeColors(undefined), []);
+});
+
+test("findColor and allImages", () => {
+  const p = { images: ["a.jpg"], colors: [{ name: "Teal", images: ["t.jpg"] }] };
+  assert.equal(findColor(p, " teal ").name, "Teal");
+  assert.equal(findColor(p, "Pink"), null);
+  assert.deepEqual(allImages(p), ["a.jpg", "t.jpg"]);
+});
+
+test("normalizeCategories: names are required and unique; renames are noted", () => {
+  const { categories, renames } = normalizeCategories([
+    { name: " Kanchipuram ", tagline: "Heirloom", home: 1, was: "Kanjivaram" },
+    { name: "Cotton", was: "Cotton" },
+    { name: "New one" },
+  ]);
+  assert.deepEqual(categories, [
+    { name: "Kanchipuram", tagline: "Heirloom", home: true },
+    { name: "Cotton", tagline: "", home: false },
+    { name: "New one", tagline: "", home: false },
+  ]);
+  assert.deepEqual(renames, [{ from: "Kanjivaram", to: "Kanchipuram" }]);
+  assert.match(normalizeCategories([{ name: "" }]).error, /needs a name/);
+  assert.match(normalizeCategories([{ name: "A" }, { name: "a" }]).error, /twice/);
+  assert.ok(normalizeCategories("nope").error);
 });

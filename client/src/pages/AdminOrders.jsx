@@ -212,9 +212,9 @@ export default function AdminOrders() {
                 <div className="order-detail-expand">
                   <div className="ode-col">
                     <h4>Items</h4>
-                    {o.items.map((i) => (
-                      <div key={i.id} className="ode-item">
-                        <span>{i.name} × {i.qty}</span>
+                    {o.items.map((i, n) => (
+                      <div key={n} className="ode-item">
+                        <span>{i.name}{i.color ? ` (${i.color})` : ""} × {i.qty}</span>
                         <span>{formatPrice(i.price * i.qty)}</span>
                       </div>
                     ))}

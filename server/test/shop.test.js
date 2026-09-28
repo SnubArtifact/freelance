@@ -23,6 +23,7 @@ const product = (fields = {}) => ({
   fabric: "",
   color: "",
   images: [],
+  colors: [],
   featured: false,
   inStock: true,
   stock: null,
@@ -121,6 +122,45 @@ for (const [name, open] of Object.entries(backends)) {
       assert.deepEqual(await shop.deleteProduct(older.id), renamed);
       assert.equal(await shop.deleteProduct(older.id), null);
       assert.deepEqual((await shop.listProducts()).map((p) => p.id), [newer.id]);
+    });
+
+    test("a saree's colours are saved with it", async () => {
+      const colors = [
+        { name: "Maroon", hex: "#6d1f3a", images: ["m1.jpg", "m2.jpg"] },
+        { name: "Teal", hex: "", images: [] },
+      ];
+      const saree = product({ colors });
+      await shop.createProduct(saree);
+      assert.deepEqual((await shop.getProduct(saree.id)).colors, colors);
+      const updated = await shop.replaceProduct({ ...saree, colors: colors.slice(1) });
+      assert.deepEqual(updated.colors, colors.slice(1));
+    });
+
+    test("categories: defaults until saved; renames move their sarees", async () => {
+      await shop.createProduct(product({ category: "Tussar" }));
+      const start = await shop.listCategories();
+      assert.equal(start[0].name, "Kanjivaram");
+      assert.ok(start.some((c) => c.name === "Tussar"), "a category already in use is listed");
+
+      const a = product({ category: "Silk" });
+      const b = product({ category: "Cotton" });
+      await shop.createProduct(a);
+      await shop.createProduct(b);
+      // Swap two names in one save.
+      const saved = [
+        { name: "Cotton", tagline: "", home: true },
+        { name: "Silk", tagline: "Soft", home: false },
+      ];
+      await shop.saveCategories(saved, [
+        { from: "Silk", to: "Cotton" },
+        { from: "Cotton", to: "Silk" },
+      ]);
+      assert.deepEqual(await shop.listCategories(), saved);
+      assert.equal((await shop.getProduct(a.id)).category, "Cotton");
+      assert.equal((await shop.getProduct(b.id)).category, "Silk");
+
+      await shop.saveCategories([]);
+      assert.deepEqual(await shop.listCategories(), [], "an emptied list stays empty");
     });
 
     test("ids that aren't plain strings match nothing", async () => {

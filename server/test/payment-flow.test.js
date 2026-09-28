@@ -178,7 +178,7 @@ describe("HDFC security audit checklist", () => {
     const [p] = await products();
     const { body } = await checkout([{ id: p.id, qty: 2, price: 1, name: "cheap" }]);
     const session = gateway.sessions.find((s) => s.order_id === body.orderNo);
-    const expected = p.price * 2 + (p.price * 2 > 4999 ? 0 : 99);
+    const expected = p.price * 2; // shipping is free
     assert.equal(session.amount, expected.toFixed(2));
   });
 
@@ -336,5 +336,80 @@ describe("general web security", () => {
 
   test("the admin password is never written to the log", () => {
     assert.ok(!output.includes("admin-pw"));
+  });
+});
+
+describe("colours and categories", () => {
+  test("a saree is bought in a colour it comes in; colours share its stock", async () => {
+    const h = await admin();
+    const created = await json(
+      await post(
+        "/api/products",
+        {
+          name: "Two-tone silk",
+          price: 1500,
+          category: "Silk",
+          stock: 3,
+          images: ["main.jpg"],
+          colors: [
+            { name: "Maroon", hex: "#6d1f3a", images: ["maroon.jpg"] },
+            { name: "Teal", hex: "#1f6d6a", images: [] },
+          ],
+        },
+        h
+      )
+    );
+    assert.equal(created.status, 201);
+    const id = created.body.id;
+
+    const { status, body } = await checkout([{ id, qty: 1, color: "maroon" }]);
+    assert.equal(status, 200);
+    const orders = (await json(await fetch(`${base}/api/admin/orders`, { headers: h }))).body;
+    const [item] = orders.find((o) => o.orderNo === body.orderNo).items;
+    assert.deepEqual([item.color, item.image], ["Maroon", "maroon.jpg"]);
+
+    const noColor = await checkout([{ id, qty: 1 }]);
+    const first = (await json(await fetch(`${base}/api/admin/orders`, { headers: h }))).body.find(
+      (o) => o.orderNo === noColor.body.orderNo
+    );
+    assert.equal(first.items[0].color, "Maroon", "no colour given means the first one");
+
+    const unknown = await checkout([{ id, qty: 1, color: "Pink" }]);
+    assert.equal(unknown.status, 409);
+    assert.match(unknown.body.error, /no longer available in Pink/);
+
+    const tooMany = await checkout([
+      { id, qty: 2, color: "Maroon" },
+      { id, qty: 2, color: "Teal" },
+    ]);
+    assert.equal(tooMany.status, 409);
+    assert.match(tooMany.body.error, /Only 3 left/);
+
+    await fetch(`${base}/api/products/${id}`, { method: "DELETE", headers: h });
+  });
+
+  test("the admin can rename categories, and their sarees move with them", async () => {
+    const h = await admin();
+    const start = (await json(await fetch(`${base}/api/categories`))).body;
+    assert.ok(start.length > 0);
+
+    const put = (categories, headers = h) =>
+      fetch(`${base}/api/categories`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ categories }),
+      });
+    assert.equal((await put([{ name: "X" }], {})).status, 401);
+    assert.equal((await put([{ name: "" }])).status, 400);
+
+    const saree = (await products()).find((p) => p.category === "Kanjivaram");
+    const renamed = start.map((c) =>
+      c.name === "Kanjivaram" ? { ...c, name: "Kanchipuram", was: "Kanjivaram" } : { ...c, was: c.name }
+    );
+    assert.equal((await put(renamed)).status, 200);
+    const now = (await json(await fetch(`${base}/api/categories`))).body;
+    assert.ok(now.some((c) => c.name === "Kanchipuram"));
+    assert.ok(!now.some((c) => c.name === "Kanjivaram"));
+    assert.equal((await json(await fetch(`${base}/api/products/${saree.id}`))).body.category, "Kanchipuram");
   });
 });

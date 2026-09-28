@@ -28,14 +28,6 @@ export default function Navbar() {
           <img className="brand-logo-full" src="/logo.jpeg" alt="Pankaj Enterprises Sarees" />
         </Link>
 
-        <button
-          className="nav-toggle"
-          aria-label="Menu"
-          onClick={() => setOpen((o) => !o)}
-        >
-          <span /><span /><span />
-        </button>
-
         <nav className={`nav-links ${open ? "open" : ""}`} onClick={() => setOpen(false)}>
           <NavLink to="/" end>Home</NavLink>
           <NavLink to="/collection">Collection</NavLink>
@@ -62,12 +54,33 @@ export default function Navbar() {
               </svg>
             </button>
           </form>
+        </nav>
 
-          <Link to="/cart" className="cart-link">
-            Cart
+        {/* Outside the menu, so the cart is one tap away on phones too. */}
+        <div className="nav-actions">
+          <Link
+            to="/cart"
+            className="cart-btn"
+            aria-label={count ? `Cart, ${count} item${count === 1 ? "" : "s"}` : "Cart"}
+            onClick={() => setOpen(false)}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"
+              strokeLinejoin="round" aria-hidden="true">
+              <path d="M6 7h12l-1 13H7L6 7z" />
+              <path d="M9 7a3 3 0 0 1 6 0" />
+            </svg>
+            <span className="cart-label">Cart</span>
             {count > 0 && <span className="cart-badge">{count}</span>}
           </Link>
-        </nav>
+          <button
+            className="nav-toggle"
+            aria-label="Menu"
+            onClick={() => setOpen((o) => !o)}
+          >
+            <span /><span /><span />
+          </button>
+        </div>
       </div>
     </header>
   );

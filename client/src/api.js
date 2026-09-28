@@ -104,6 +104,23 @@ export const api = {
     );
   },
 
+  // The shop's categories, in the admin's order: [{ name, tagline, home }].
+  async listCategories() {
+    return handle(await fetch(apiUrl("/api/categories")));
+  },
+
+  // Replaces the list. Give each entry `was` (its name before editing) so a
+  // renamed category keeps its sarees.
+  async saveCategories(categories) {
+    return handleAuthed(
+      await fetch(apiUrl("/api/categories"), {
+        method: "PUT",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ categories }),
+      })
+    );
+  },
+
   async uploadImages(files) {
     const form = new FormData();
     [...files].forEach((f) => form.append("images", f));
@@ -138,7 +155,7 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: items.map(({ id, qty, name }) => ({ id, qty, name })),
+          items: items.map(({ id, qty, name, color }) => ({ id, qty, name, color })),
           customer,
           attemptId,
         }),
@@ -183,7 +200,7 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: items.map(({ id, qty, name }) => ({ id, qty, name })),
+          items: items.map(({ id, qty, name, color }) => ({ id, qty, name, color })),
           customer,
           attemptId,
         }),

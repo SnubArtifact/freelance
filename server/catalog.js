@@ -12,6 +12,44 @@ export function normalizeStock(value) {
 export const hasTrackedStock = (product) =>
   product.stock !== null && product.stock !== undefined;
 
+const cleanImages = (list) =>
+  Array.isArray(list) ? list.filter((u) => typeof u === "string" && u) : [];
+
+/**
+ * The colours a saree comes in, each with its own swatch and photos. Nameless
+ * entries and repeated names are dropped; a swatch that isn't a #rrggbb hex
+ * code is left blank.
+ */
+export function normalizeColors(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const colors = [];
+  for (const c of list.slice(0, 20)) {
+    const name = String(c?.name || "").trim().slice(0, 60);
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    const hex = String(c?.hex || "").trim();
+    colors.push({
+      name,
+      hex: /^#[0-9a-f]{6}$/i.test(hex) ? hex.toLowerCase() : "",
+      images: cleanImages(c?.images),
+    });
+  }
+  return colors;
+}
+
+// Finds one of a saree's colours by name, ignoring case.
+export const findColor = (product, name) =>
+  (product.colors || []).find(
+    (c) => c.name.toLowerCase() === String(name || "").trim().toLowerCase()
+  ) || null;
+
+// Every photo a saree uses: its own and each colour's.
+export const allImages = (product) => [
+  ...(product.images || []),
+  ...(product.colors || []).flatMap((c) => c.images || []),
+];
+
 // The fields the admin form may set, cleaned up.
 export function normalizeProduct(body) {
   return {
@@ -22,9 +60,8 @@ export function normalizeProduct(body) {
     category: String(body.category || "Uncategorized").trim(),
     fabric: String(body.fabric || "").trim(),
     color: String(body.color || "").trim(),
-    images: Array.isArray(body.images)
-      ? body.images.filter((u) => typeof u === "string" && u)
-      : [],
+    images: cleanImages(body.images),
+    colors: normalizeColors(body.colors),
     featured: Boolean(body.featured),
     inStock: body.inStock === undefined ? true : Boolean(body.inStock),
     stock: normalizeStock(body.stock),
@@ -48,6 +85,47 @@ export function applyStockChange(product, change) {
   return next;
 }
 
+// The categories a shop starts with, until the admin changes them. Those
+// marked `home` are shown on the homepage.
+export const DEFAULT_CATEGORIES = [
+  { name: "Kanjivaram", tagline: "Heirloom silk", home: true },
+  { name: "Banarasi", tagline: "Festive weaves", home: true },
+  { name: "Silk", tagline: "", home: false },
+  { name: "Georgette", tagline: "Designer drapes", home: true },
+  { name: "Cotton", tagline: "Everyday ease", home: true },
+  { name: "Chiffon", tagline: "", home: false },
+  { name: "Designer", tagline: "", home: false },
+  { name: "Other", tagline: "", home: false },
+];
+
+/**
+ * Cleans up the category list from the admin panel. Each entry is
+ * { name, tagline, home, was }, where `was` is the name it had before, so a
+ * rename can move its sarees along. Returns { categories, renames } or
+ * { error }.
+ */
+export function normalizeCategories(list) {
+  if (!Array.isArray(list)) return { error: "Send a list of categories" };
+  if (list.length > 50) return { error: "At most 50 categories" };
+  const seen = new Set();
+  const categories = [];
+  const renames = [];
+  for (const c of list) {
+    const name = String(c?.name || "").trim().slice(0, 60);
+    if (!name) return { error: "Every category needs a name" };
+    if (seen.has(name.toLowerCase())) return { error: `"${name}" is listed twice` };
+    seen.add(name.toLowerCase());
+    categories.push({
+      name,
+      tagline: String(c?.tagline || "").trim().slice(0, 80),
+      home: Boolean(c?.home),
+    });
+    const was = String(c?.was || "").trim();
+    if (was && was !== name) renames.push({ from: was, to: name });
+  }
+  return { categories, renames };
+}
+
 // A few sarees so a brand-new local setup isn't empty. Only used by the file
 // store; the MongoDB store never adds samples to a real shop.
 export function sampleProducts(now = Date.now()) {
@@ -55,6 +133,7 @@ export function sampleProducts(now = Date.now()) {
     id: crypto.randomUUID(),
     inStock: true,
     stock: null,
+    colors: [],
     createdAt: now - age,
     ...fields,
   });
