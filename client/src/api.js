@@ -192,8 +192,8 @@ export const api = {
     );
   },
 
-  // Razorpay: create the order its checkout window pays against. Only ids and
-  // quantities are sent; prices come from the server.
+  // Razorpay: create the order its hosted checkout page pays against. Only
+  // ids and quantities are sent; prices come from the server.
   async razorpayOrder(items, customer, attemptId) {
     return handle(
       await fetch(apiUrl("/api/payments/razorpay/order"), {

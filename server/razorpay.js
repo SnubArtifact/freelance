@@ -2,8 +2,8 @@ import crypto from "node:crypto";
 import { safeEqual } from "./security.js";
 
 /**
- * Razorpay Standard Checkout: creating the order the browser pays against, and
- * the server-side checks that decide whether it was really paid.
+ * Razorpay Hosted Checkout: creating the order the hosted gateway pays
+ * against, and the server-side checks that decide whether it was really paid.
  *
  * Razorpay counts money in paise (₹1 = 100), so amounts here are whole paise.
  */
@@ -36,8 +36,8 @@ export function razorpayClient({ keyId, keySecret, apiBase = "https://api.razorp
   }
 
   return {
-    // The order the browser's checkout window pays against. `receipt` is our
-    // own order number, so the two can always be matched up.
+    // The order the hosted gateway pays against. `receipt` is our own order
+    // number, so the two can always be matched up.
     createOrder: ({ orderNo, amountPaise, notes }) =>
       call("POST", "/orders", {
         amount: amountPaise,

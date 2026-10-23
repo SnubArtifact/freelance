@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useCart, useCartCheck } from "../context/CartContext.jsx";
 import { api, formatPrice } from "../api.js";
 import { apiUrl } from "../config.js";
-import { isGatewayUrl, loadRazorpayCheckout, newAttemptId } from "../gateway.js";
+import { isGatewayUrl, newAttemptId, postRazorpayHostedCheckout } from "../gateway.js";
 import Receipt from "../components/Receipt.jsx";
 
 /* ─── Demo Payment Modal ───────────────────────────────────────────────────── */
@@ -183,8 +183,6 @@ export default function Checkout() {
   // Guards against a second click sending a second payment request before the
   // button has had a chance to disable itself.
   const inFlight = useRef(false);
-  // Once a payment has an answer, a closing window mustn't overwrite it.
-  const settled = useRef(false);
   const pollTimer = useRef(null);
   const polls = useRef(0);
 
@@ -268,70 +266,10 @@ export default function Checkout() {
     pincode: form.pincode,
   });
 
-  // Razorpay opens its own window on this page. Nothing it hands back is
-  // believed until the server has checked it with Razorpay.
-  async function payWithRazorpay(session) {
-    const Razorpay = await loadRazorpayCheckout();
-    const done = (result) => {
-      settled.current = true;
-      setReceipt(result);
-      if (result.outcome === "paid") clearCart();
-      setSubmitting(false);
-      inFlight.current = false;
-      window.scrollTo({ top: 0 });
-    };
-    const stop = (message) => {
-      setError(message);
-      setSubmitting(false);
-      inFlight.current = false;
-    };
-    const close = async (reason) => {
-      if (settled.current) return;
-      try {
-        done(await api.razorpayCancel({ orderNo: session.orderNo, token: session.token, reason }));
-      } catch (err) {
-        stop(err.message || "The payment was not completed.");
-      }
-    };
-
-    const checkout = new Razorpay({
-      key: session.keyId,
-      order_id: session.razorpayOrderId,
-      amount: session.amount,
-      currency: session.currency,
-      name: session.name,
-      description: `Order ${session.orderNo}`,
-      prefill: session.prefill,
-      notes: { order_no: session.orderNo },
-      theme: { color: "#6d1f3a" },
-      handler: async (response) => {
-        try {
-          done(
-            await api.razorpayVerify({
-              orderNo: session.orderNo,
-              token: session.token,
-              razorpay_order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature,
-            })
-          );
-        } catch (err) {
-          stop(err.message || "We couldn't confirm that payment. Please contact us before paying again.");
-        }
-      },
-      modal: { ondismiss: () => close("the payment window was closed") },
-    });
-    checkout.on("payment.failed", (response) =>
-      close(response?.error?.description || "the payment failed")
-    );
-    checkout.open();
-  }
-
   async function placeOrder(e) {
     e.preventDefault();
     if (inFlight.current) return;
     inFlight.current = true;
-    settled.current = false;
     setError("");
     setSubmitting(true);
     try {
@@ -350,7 +288,8 @@ export default function Checkout() {
       }
 
       if (data.provider === "razorpay") {
-        await payWithRazorpay(data);
+        // HDFC-requested Razorpay Hosted Integration: full-page POST redirect.
+        postRazorpayHostedCheckout(data);
         return;
       }
 
@@ -520,7 +459,7 @@ export default function Checkout() {
               {!payLive
                 ? "A demo payment screen will open to simulate the flow."
                 : provider === "razorpay"
-                  ? "A secure Razorpay window will open to take the payment."
+                  ? "You'll be redirected to Razorpay's secure payment page."
                   : "You'll be redirected to HDFC's secure payment page."}
             </p>
           </aside>

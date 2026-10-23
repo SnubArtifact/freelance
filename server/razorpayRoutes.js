@@ -8,9 +8,9 @@ import {
 } from "./razorpay.js";
 
 /**
- * The Razorpay half of checkout. The browser opens Razorpay's own payment
- * window, so there is no redirect to guard — but nothing it sends back is
- * trusted either:
+ * The Razorpay half of checkout. HDFC requires Razorpay Hosted Checkout: the
+ * browser POSTs options to Razorpay's full gateway page, then Razorpay POSTs
+ * the result back to this server. Nothing it sends back is trusted either:
  *
  *  - the amount comes from the shop's database, never the browser;
  *  - the signature Razorpay returns is checked with the key secret, and a
@@ -20,7 +20,21 @@ import {
  *  - a webhook covers the shopper who pays and closes the tab.
  */
 export function razorpayPayments(ctx) {
-  const { shop, tokens, client, keyId, keySecret, webhookSecret, shopName, sendOrderEmail, prepareOrder, publicReceipt, wrap } = ctx;
+  const {
+    shop,
+    tokens,
+    client,
+    keyId,
+    keySecret,
+    webhookSecret,
+    shopName,
+    sendOrderEmail,
+    prepareOrder,
+    publicReceipt,
+    publicServerUrl,
+    clientUrl,
+    wrap,
+  } = ctx;
 
   // Applies Razorpay's own record of a payment to one of our orders. Safe to
   // run repeatedly: an order is completed once, and a paid one is never undone.
@@ -157,7 +171,7 @@ export function razorpayPayments(ctx) {
 
   function register(app) {
     // Start a payment: record our order, then create the Razorpay order the
-    // checkout window pays against.
+    // hosted checkout page pays against.
     app.post("/api/payments/razorpay/order", wrap(async (req, res) => {
       const order = await prepareOrder(req, res, {
         resume: (earlier) =>
@@ -193,26 +207,130 @@ export function razorpayPayments(ctx) {
       }
     }));
 
-    // What the browser needs to open Razorpay's window. The key id is public;
-    // the secret never leaves the server.
+    // What the browser POSTs to Razorpay Hosted Checkout. The key id is
+    // public; the secret never leaves the server. `order_id`, amount and all
+    // callbacks are derived here, never accepted from the browser.
     function checkoutOptions(order) {
+      const callbackQuery = new URLSearchParams({
+        order: order.orderNo,
+        ref: tokens.returnRef(order.orderNo),
+      });
+      const callbackUrl = `${publicServerUrl}/api/payments/razorpay/hosted-return?${callbackQuery}`;
+      const cancelUrl = `${publicServerUrl}/api/payments/razorpay/hosted-cancel?${callbackQuery}`;
       return {
         configured: true,
         provider: "razorpay",
+        checkoutMode: "hosted",
+        checkoutUrl: "https://api.razorpay.com/v1/checkout/embedded",
+        // Kept for the API's backwards compatibility only. The storefront
+        // uses `fields` below and never loads Razorpay's checkout.js.
         keyId,
         orderNo: order.orderNo,
         razorpayOrderId: order.gatewayRef,
         amount: toPaise(order.total),
         currency: "INR",
-        name: shopName,
         token: tokens.receipt(order.orderNo),
         prefill: {
           name: order.customer?.name || "",
           email: order.customer?.email || "",
           contact: order.customer?.phone || "",
         },
+        fields: {
+          key_id: keyId,
+          name: shopName,
+          description: `Order ${order.orderNo}`,
+          order_id: order.gatewayRef,
+          amount: toPaise(order.total),
+          currency: "INR",
+          "prefill[name]": order.customer?.name || "",
+          "prefill[email]": order.customer?.email || "",
+          "prefill[contact]": order.customer?.phone || "",
+          "notes[order_no]": order.orderNo,
+          callback_url: callbackUrl,
+          cancel_url: cancelUrl,
+        },
       };
     }
+
+    const returnToStorefront = (res, orderNo, status) =>
+      res.redirect(
+        303,
+        `${clientUrl}/checkout?${new URLSearchParams({
+          status,
+          ...(orderNo ? { order: orderNo, t: tokens.receipt(orderNo) } : {}),
+        })}`
+      );
+
+    // Razorpay Hosted Checkout submits successful and failed payment results
+    // here. The signed URL parameter is tied to this order; the Razorpay
+    // signature is then checked before Fetch Single Payment decides its state.
+    app.post("/api/payments/razorpay/hosted-return", wrap(async (req, res) => {
+      const orderNo = String(req.query?.order || "");
+      const ref = String(req.query?.ref || "");
+      if (!orderNo || !tokens.check("return", orderNo, ref)) {
+        return returnToStorefront(res, "", "failed");
+      }
+      const order = await shop.getOrderByOrderNo(orderNo);
+      if (!order) return returnToStorefront(res, "", "failed");
+
+      const paymentId = String(req.body?.razorpay_payment_id || "");
+      const razorpayOrderId = String(req.body?.razorpay_order_id || "");
+      const signature = String(req.body?.razorpay_signature || "");
+      const signatureOk =
+        Boolean(order.gatewayRef) &&
+        order.gatewayRef === razorpayOrderId &&
+        verifyCheckoutSignature({ orderId: order.gatewayRef, paymentId, signature }, keySecret);
+      const isFailureCallback = !paymentId && !razorpayOrderId && !signature;
+
+      await shop.logEvent(orderNo, "hosted_returned", {
+        payment_id: paymentId || null,
+        razorpay_order_id: razorpayOrderId || null,
+        signature: signatureOk ? "valid" : "INVALID",
+      });
+
+      if (!signatureOk) {
+        if (!isFailureCallback) {
+          await shop.logEvent(orderNo, "tamper_suspected", {
+            reason: "the hosted checkout callback did not match this order and signature",
+          });
+        }
+        // A failure callback has no payment signature. Its fields are not
+        // trusted, but the bank record is still checked before showing status.
+        const checked = await confirmOrder(order, { source: "hosted callback without valid signature" }).catch(() => null);
+        return returnToStorefront(res, orderNo, checked?.outcome || "failed");
+      }
+
+      try {
+        const result = await confirmOrder(order, {
+          source: "hosted checkout callback",
+          known: { id: paymentId },
+        });
+        return returnToStorefront(res, orderNo, result.outcome);
+      } catch (err) {
+        console.error(`[razorpay] hosted callback failed for ${orderNo}:`, err.message);
+        return returnToStorefront(res, orderNo, "pending");
+      }
+    }));
+
+    // Razorpay redirects here with GET if the shopper cancels or goes back.
+    app.get("/api/payments/razorpay/hosted-cancel", wrap(async (req, res) => {
+      const orderNo = String(req.query?.order || "");
+      const ref = String(req.query?.ref || "");
+      if (!orderNo || !tokens.check("return", orderNo, ref)) {
+        return returnToStorefront(res, "", "failed");
+      }
+      const order = await shop.getOrderByOrderNo(orderNo);
+      if (!order) return returnToStorefront(res, "", "failed");
+
+      await shop.logEvent(orderNo, "hosted_checkout_cancelled", { source: "Razorpay Hosted Checkout" });
+      const checked = await confirmOrder(order, { source: "hosted checkout cancelled" }).catch(() => null);
+      if (checked?.outcome === "paid") return returnToStorefront(res, orderNo, "paid");
+      const updated = await shop.recordUnpaid(orderNo, {
+        paymentStatus: "Not paid (payment cancelled)",
+        status: "Payment Failed",
+      });
+      return returnToStorefront(res, updated?.orderNo || orderNo, checked?.outcome || "failed");
+    }));
 
     // The checkout window succeeded. Check its signature, then ask Razorpay.
     app.post("/api/payments/razorpay/verify", wrap(async (req, res) => {

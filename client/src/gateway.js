@@ -14,22 +14,32 @@ export function isGatewayUrl(link) {
   return GATEWAY_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
 }
 
-// Razorpay's payment window is opened by their own script, fetched from their
-// domain the first time a shopper needs it.
-let checkoutScript = null;
-export function loadRazorpayCheckout() {
-  if (window.Razorpay) return Promise.resolve(window.Razorpay);
-  checkoutScript ??= new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://checkout.razorpay.com/v1/checkout.js";
-    script.onload = () => resolve(window.Razorpay);
-    script.onerror = () => {
-      checkoutScript = null;
-      reject(new Error("We couldn't load the payment window. Please check your connection and try again."));
-    };
-    document.head.appendChild(script);
-  });
-  return checkoutScript;
+// HDFC requires Razorpay Hosted Checkout, rather than Razorpay's JavaScript
+// pop-up. Razorpay expects the options as a normal HTML form POST, which moves
+// the shopper to the full hosted gateway page. Only server-created fields are
+// submitted here; in particular, a key secret never reaches the browser.
+const RAZORPAY_HOSTED_CHECKOUT = "https://api.razorpay.com/v1/checkout/embedded";
+
+export function postRazorpayHostedCheckout(session) {
+  if (session?.checkoutUrl !== RAZORPAY_HOSTED_CHECKOUT || !session?.fields) {
+    throw new Error("We couldn't start the secure payment page. Please try again.");
+  }
+
+  const form = document.createElement("form");
+  form.method = "post";
+  form.action = RAZORPAY_HOSTED_CHECKOUT;
+  form.style.display = "none";
+
+  for (const [name, value] of Object.entries(session.fields)) {
+    if (value === undefined || value === null) continue;
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = String(value);
+    form.appendChild(input);
+  }
+  document.body.appendChild(form);
+  form.submit();
 }
 
 // Identifies one checkout submission (see api.createHdfcSession).

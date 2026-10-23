@@ -958,6 +958,8 @@ const razorpayRoutes = razorpay
       sendOrderEmail,
       prepareOrder,
       publicReceipt,
+      publicServerUrl: PUBLIC_SERVER_URL,
+      clientUrl: CLIENT_URL,
       wrap,
     })
   : null;

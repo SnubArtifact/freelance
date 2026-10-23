@@ -154,6 +154,13 @@ const post = (route, body, headers = {}) =>
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
+const postForm = (url, fields) =>
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(fields),
+    redirect: "manual",
+  });
 const customer = { name: "Test Buyer", email: "buyer@example.com", phone: "9876543210", address: "1 MG Road", city: "Indore", pincode: "452001" };
 
 let adminToken;
@@ -196,6 +203,38 @@ describe("Razorpay checkout", () => {
     assert.equal(razorpay.orders.get(body.razorpayOrderId).receipt, body.orderNo);
     assert.equal(body.keyId, KEY_ID, "the public key id, never the secret");
     assert.ok(!JSON.stringify(body).includes(KEY_SECRET));
+  });
+
+  test("uses HDFC-requested Razorpay Hosted Checkout and safely handles its callback", async () => {
+    const [p] = await products();
+    const { body: session } = await startCheckout([{ id: p.id, qty: 1 }]);
+    assert.equal(session.checkoutMode, "hosted");
+    assert.equal(session.checkoutUrl, "https://api.razorpay.com/v1/checkout/embedded");
+    assert.equal(session.fields.key_id, KEY_ID);
+    assert.equal(session.fields.order_id, session.razorpayOrderId);
+    assert.equal(session.fields.amount, session.amount);
+    assert.equal(session.fields.currency, "INR");
+    assert.match(session.fields.callback_url, new RegExp(`^${base}/api/payments/razorpay/hosted-return\\?`));
+    assert.match(session.fields.cancel_url, new RegExp(`^${base}/api/payments/razorpay/hosted-cancel\\?`));
+    assert.ok(!JSON.stringify(session).includes(KEY_SECRET));
+
+    const payment = addPayment(session.razorpayOrderId);
+    const response = await postForm(session.fields.callback_url, {
+      razorpay_payment_id: payment.id,
+      razorpay_order_id: session.razorpayOrderId,
+      razorpay_signature: sign(session.razorpayOrderId, payment.id),
+    });
+    assert.equal(response.status, 303);
+    const receiptUrl = new URL(response.headers.get("location"));
+    assert.equal(receiptUrl.origin, STOREFRONT);
+    assert.equal(receiptUrl.searchParams.get("status"), "paid");
+    assert.equal(receiptUrl.searchParams.get("order"), session.orderNo);
+
+    const { body: receipt } = await json(
+      await fetch(`${base}/api/orders/${session.orderNo}?t=${receiptUrl.searchParams.get("t")}`)
+    );
+    assert.equal(receipt.outcome, "paid");
+    assert.ok(razorpay.fetched.includes(payment.id), "callback uses Fetch Single Payment");
   });
 
   test("a genuine payment is confirmed with Razorpay and marked paid once", async () => {
