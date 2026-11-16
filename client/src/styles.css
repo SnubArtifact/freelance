@@ -206,7 +206,7 @@ main { flex: 1; }
 .cat-tag { font-size: 0.78rem; color: var(--muted); letter-spacing: 0.04em; }
 
 /* ---------- Sections / grid ---------- */
-.section { max-width: 1200px; margin: 0 auto; padding: 2.5rem 1.5rem; }
+.section { max-width: 1320px; margin: 0 auto; padding: 2.5rem 1.5rem; }
 .section-head {
   display: flex; justify-content: space-between; align-items: flex-end;
   margin-bottom: 2rem; gap: 1rem;
@@ -280,7 +280,7 @@ main { flex: 1; }
 .promise-item span { font-size: 0.85rem; opacity: 0.85; }
 
 /* ---------- Page generic ---------- */
-.page { max-width: 1200px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
+.page { max-width: 1320px; margin: 0 auto; padding: 2.5rem 1.5rem 4rem; }
 .page-head { margin-bottom: 2rem; }
 .page-head h1 { font-size: clamp(2rem, 4vw, 3rem); margin: 0.4rem 0; }
 .page-head p { color: var(--muted); }
